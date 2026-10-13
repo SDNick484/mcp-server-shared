@@ -15,3 +15,4 @@ venv/
 # so not committed: the templates are the source.
 /tests/test_remote.py
 /tests/test_logsafe.py
+/tests/test_tasks.py

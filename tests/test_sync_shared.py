@@ -110,6 +110,23 @@ def test_check_passes_when_in_sync_and_names_each_edited_or_missing_file(github,
     assert run(sync, sibling) == 0 and run(sync, sibling, "--check") == 0
 
 
+def test_check_still_fails_when_its_output_is_cut_short(github, sibling, monkeypatch):
+    # `--check | head` closes the pipe early; that used to end in a BrokenPipeError traceback.
+    sync, _, _ = github
+    run(sync, sibling)
+    (sibling / "src/demo_mcp/thing.py").write_text("edited here\n")
+
+    class ClosedPipe:
+        def write(self, text: str) -> int:
+            raise BrokenPipeError
+
+        def flush(self) -> None:
+            raise BrokenPipeError
+
+    monkeypatch.setattr(sys, "stdout", ClosedPipe())
+    assert run(sync, sibling, "--check") == 1
+
+
 def test_check_writes_nothing(github, sibling):
     sync, _, _ = github
     assert run(sync, sibling, "--check") == 1

@@ -1,0 +1,28 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12", "3.13", "3.14"]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: ${{ matrix.python-version }}
+      - run: pip install -e ".[dev]"
+      # The shared tests exactly as a sibling gets them, rendered for this repo's package.
+      # --source .: from this checkout, so a PR tests its own changes, not main's.
+      - name: Render the shared tests
+        run: python scripts/sync_shared.py --source . --package mcp_shared
+      - run: ruff check .
+      - run: ruff format --check .
+      - run: mypy
+      - run: pytest

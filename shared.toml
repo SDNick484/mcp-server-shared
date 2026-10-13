@@ -1,0 +1,35 @@
+# The files every sibling server carries a copy of, read by scripts/sync_shared.py.
+#
+# Each [[file]] copies `source` (a path in this repo) to `target` (a path in the
+# sibling). `__PKG__` in a target becomes the sibling's package name (from its
+# shared.lock). With `render = true`, `__PKG__` in the file's contents is
+# replaced too; without it the file is copied byte for byte.
+#
+# To share another file: add it here, push to main, and run
+# `python scripts/sync_shared.py --update` in each sibling. Dropping an entry
+# doesn't delete the sibling's copy; delete those by hand.
+
+format = 1  # bump only with a matching change to scripts/sync_shared.py (see FORMAT there)
+
+[[file]]
+source = "src/mcp_shared/remote.py"
+target = "src/__PKG__/remote.py"
+
+[[file]]
+source = "src/mcp_shared/logsafe.py"
+target = "src/__PKG__/logsafe.py"
+
+[[file]]
+source = "templates/tests/test_remote.py"
+target = "tests/test_remote.py"
+render = true
+
+[[file]]
+source = "templates/tests/test_logsafe.py"
+target = "tests/test_logsafe.py"
+render = true
+
+# The sync script is shared too, so `--update` brings in a new version of itself.
+[[file]]
+source = "scripts/sync_shared.py"
+target = "scripts/sync_shared.py"

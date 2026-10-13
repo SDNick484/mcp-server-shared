@@ -1,0 +1,17 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.venv/
+venv/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# The shared tests rendered for this repo's own package from templates/tests/
+# (python scripts/sync_shared.py --source . --package mcp_shared). Generated,
+# so not committed: the templates are the source.
+/tests/test_remote.py
+/tests/test_logsafe.py

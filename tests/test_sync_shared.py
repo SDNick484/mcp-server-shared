@@ -198,6 +198,35 @@ def test_contradictory_flags_are_refused(github, sibling, args):
     assert exc.value.code == 2
 
 
+def test_the_token_goes_to_the_api_only(monkeypatch):
+    # raw.githubusercontent.com answers 404 to a token that can't see the repo, even a public one.
+    sync = load_script()
+    monkeypatch.setenv("GITHUB_TOKEN", "t0ken")
+    sent: dict[str, str | None] = {}
+
+    class Response:
+        def __enter__(self) -> Response:
+            return self
+
+        def __exit__(self, *exc: object) -> None:
+            return None
+
+        def read(self) -> bytes:
+            return b"ok"
+
+    def fake_urlopen(request, timeout):  # noqa: ARG001
+        sent[request.full_url] = request.get_header("Authorization")
+        return Response()
+
+    monkeypatch.setattr(sync.urllib.request, "urlopen", fake_urlopen)
+    sync._get("https://api.github.com/repos/o/r/commits/main")
+    sync._get("https://raw.githubusercontent.com/o/r/abc/f.py")
+    assert sent == {
+        "https://api.github.com/repos/o/r/commits/main": "Bearer t0ken",
+        "https://raw.githubusercontent.com/o/r/abc/f.py": None,
+    }
+
+
 def test_the_lock_round_trips(github, sibling):
     sync, _, _ = github
     lock = sync.read_lock(sibling)

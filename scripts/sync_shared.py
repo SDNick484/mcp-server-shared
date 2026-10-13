@@ -30,9 +30,11 @@ Why it works the way it does:
   last, so a network failure halfway leaves the repo as it was.
 - Standard library only (tomllib needs Python 3.11), so it runs before
   `pip install` and needs nothing in CI but a Python.
-- GITHUB_TOKEN (or GH_TOKEN), if set, is sent to GitHub's hosts only. The
-  repos are public, so it isn't needed for access; it raises the API's rate
-  limit, which shared CI runners can exhaust anonymously.
+- GITHUB_TOKEN (or GH_TOKEN), if set, is sent to api.github.com only, to raise
+  its rate limit (60 an hour anonymously, per IP: shared CI runners can use
+  that up). Raw files are fetched anonymously because raw.githubusercontent.com
+  answers 404 to a token that can't see the repo, even a public one, and a
+  workflow's own token is scoped to its own repo, not to mcp-server-shared.
 """
 
 from __future__ import annotations
@@ -56,7 +58,7 @@ LOCK = "shared.lock"
 SELF = "scripts/sync_shared.py"  # where this script lives, in mcp-server-shared and in every sibling
 FORMAT = 1  # the newest shared.toml format this script understands
 DEFAULT_REPO = "SDNick484/mcp-server-shared"
-TOKEN_HOSTS = ("api.github.com", "raw.githubusercontent.com")
+TOKEN_HOSTS = ("api.github.com",)  # see the docstring for why raw.githubusercontent.com isn't here
 TIMEOUT = 30.0
 DIFF_LINES = 40  # per file, in --check output
 

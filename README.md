@@ -117,7 +117,7 @@ jobs:
   shared-drift:
     runs-on: ubuntu-latest
     env:
-      GITHUB_TOKEN: ${{ github.token }}  # raises the API rate limit; shared runners exhaust the anonymous one
+      GITHUB_TOKEN: ${{ github.token }}  # for api.github.com's rate limit; raw files are fetched without it
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-python@v7

@@ -16,3 +16,4 @@ venv/
 /tests/test_remote.py
 /tests/test_logsafe.py
 /tests/test_tasks.py
+/tests/test_ratelimit.py

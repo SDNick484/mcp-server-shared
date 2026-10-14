@@ -24,6 +24,10 @@ source = "src/mcp_shared/tasks.py"
 target = "src/__PKG__/tasks.py"
 
 [[file]]
+source = "src/mcp_shared/ratelimit.py"
+target = "src/__PKG__/ratelimit.py"
+
+[[file]]
 source = "templates/tests/test_remote.py"
 target = "tests/test_remote.py"
 render = true
@@ -36,6 +40,11 @@ render = true
 [[file]]
 source = "templates/tests/test_tasks.py"
 target = "tests/test_tasks.py"
+render = true
+
+[[file]]
+source = "templates/tests/test_ratelimit.py"
+target = "tests/test_ratelimit.py"
 render = true
 
 # The sync script is shared too, so `--update` brings in a new version of itself.

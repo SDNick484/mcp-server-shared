@@ -3,9 +3,9 @@
 ## What this is
 
 `mcp-server-shared`: the single source of truth for the code the sibling MCP servers
-(mcp-server-onkyo, -shieldtv, -harmony, -sofabaton, -webos) each carry a copy of, plus
-`scripts/sync_shared.py`, which copies it into them and checks for drift. README.md explains the
-workflow; read it before changing how syncing works.
+(mcp-server-onkyo, -shieldtv, -harmony, -sofabaton, -webos, -misterfpga, -batocera, -pixelcade)
+each carry a copy of, plus `scripts/sync_shared.py`, which copies it into them and checks for
+drift. README.md explains the workflow; read it before changing how syncing works.
 
 **This is a learning project.** The owner wants to understand how MCP servers are built, so
 explain the reasoning behind non-obvious changes instead of only making them. He's a
@@ -21,12 +21,14 @@ software/systems engineer: be technical and concrete, with specific examples.
 - `tests/`: `conftest.py` and `test_sync_shared.py` (the script, against a fake GitHub). The
   shared tests are rendered into `tests/` by `--source . --package mcp_shared` and are
   git-ignored.
-- `shared.toml`: the manifest, which files go where. Add a file here, not in the script.
+- `shared.toml`: the manifest, which files go where, grouped by `module` (a module's code and its
+  test share a name). Add a file here, not in the script. A sibling's `shared.lock` can
+  `exclude` modules by that name (the LAN-only servers exclude `remote`).
 - `scripts/sync_shared.py`: standard library only, Python 3.11+. It's shared too (it syncs itself).
 
 ## Rules for changes
 
-- **A change here reaches five repos.** Keep shared modules free of anything one sibling needs and
+- **A change here reaches eight repos.** Keep shared modules free of anything one sibling needs and
   the others don't; that belongs in the sibling (e.g. webos's `redact.py` on top of `logsafe.py`).
 - **Keep the script stdlib-only** and runnable on 3.11: CI runs it before `pip install`.
 - A `shared.toml` change the current script can't read means bumping `format` here and `FORMAT`

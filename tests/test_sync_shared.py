@@ -17,17 +17,34 @@ SCRIPT = Path(__file__).resolve().parents[1] / "scripts" / "sync_shared.py"
 OLD = "a" * 40
 NEW = "b" * 40
 
+# Two modules, so excluding one leaves the other: "thing" (code and its test) and "extra".
 MANIFEST = b"""\
+format = 2
+
+[[file]]
+source = "src/mcp_shared/thing.py"
+module = "thing"
+target = "src/__PKG__/thing.py"
+
+[[file]]
+source = "templates/tests/test_thing.py"
+module = "thing"
+target = "tests/test_thing.py"
+render = true
+
+[[file]]
+source = "src/mcp_shared/extra.py"
+module = "extra"
+target = "src/__PKG__/extra.py"
+"""
+
+# What a sibling still locked to a commit from before modules existed reads.
+MANIFEST_V1 = b"""\
 format = 1
 
 [[file]]
 source = "src/mcp_shared/thing.py"
 target = "src/__PKG__/thing.py"
-
-[[file]]
-source = "templates/tests/test_thing.py"
-target = "tests/test_thing.py"
-render = true
 """
 
 
@@ -46,6 +63,7 @@ def snapshot(version: str, manifest: bytes = MANIFEST) -> dict[str, bytes]:
         "shared.toml": manifest,
         "src/mcp_shared/thing.py": f'"""Shared. No __PKG__ here is replaced."""\nVERSION = "{version}"\n'.encode(),
         "templates/tests/test_thing.py": b"from __PKG__.thing import VERSION\n",
+        "src/mcp_shared/extra.py": b"EXTRA = True\n",
         "scripts/sync_shared.py": SCRIPT.read_bytes(),
     }
 
@@ -163,7 +181,7 @@ def test_a_failed_update_leaves_the_lock_alone(github, sibling):
 
 def test_a_newer_manifest_format_brings_in_the_newer_script_first(github, sibling, capsys):
     sync, commits, _ = github
-    commits[NEW]["shared.toml"] = MANIFEST.replace(b"format = 1", b"format = 2")
+    commits[NEW]["shared.toml"] = MANIFEST.replace(b"format = 2", f"format = {sync.FORMAT + 1}".encode())
     commits[NEW]["scripts/sync_shared.py"] = b"# the newer script\n"
     run(sync, sibling)
     assert run(sync, sibling, "--update") == 2
@@ -250,3 +268,109 @@ def test_the_lock_round_trips(github, sibling):
     (sibling / "shared.lock").write_text(lock.dump())
     assert sync.read_lock(sibling) == lock
     assert (sibling / "shared.lock").read_text().startswith("# Which mcp-server-shared commit")
+
+
+# --- excluding modules ----------------------------------------------------------------------------
+def exclude(root: Path, *names: str) -> None:
+    """Add `exclude = [...]` to the sibling's lock, as a person would by hand."""
+    listed = ", ".join(f'"{name}"' for name in names)
+    (root / "shared.lock").write_text((root / "shared.lock").read_text() + f"exclude = [{listed}]\n")
+
+
+def test_an_excluded_module_is_neither_written_nor_checked(github, sibling, capsys):
+    sync, _, _ = github
+    exclude(sibling, "thing")
+    assert run(sync, sibling) == 0
+    # Both of the module's files stay out (code and test), and the other module still comes in.
+    assert not (sibling / "src/demo_mcp/thing.py").exists()
+    assert not (sibling / "tests/test_thing.py").exists()
+    assert (sibling / "src/demo_mcp/extra.py").exists()
+    capsys.readouterr()
+    assert run(sync, sibling, "--check") == 0  # "missing" doesn't apply to what's excluded
+    out = capsys.readouterr().out
+    assert "all 1 match" in out
+    assert "(excluding thing, per shared.lock)" in out  # so a reader knows why it's 1, not 3
+
+
+def test_files_of_an_excluded_module_already_here_are_left_alone(github, sibling):
+    # Excluding means "not managed", not "delete": the script never removes a sibling's files.
+    sync, _, _ = github
+    run(sync, sibling)
+    (sibling / "src/demo_mcp/thing.py").write_text("now this repo's own\n")
+    exclude(sibling, "thing")
+    assert run(sync, sibling) == 0 and run(sync, sibling, "--check") == 0
+    assert (sibling / "src/demo_mcp/thing.py").read_text() == "now this repo's own\n"
+
+
+def test_update_keeps_the_exclude_list(github, sibling):
+    # The bug the format bump exists for: --update rebuilds the lock, and must not drop exclude.
+    sync, _, _ = github
+    exclude(sibling, "thing")
+    assert run(sync, sibling, "--update") == 0
+    lock = sync.read_lock(sibling)
+    assert lock.commit == NEW and lock.exclude == ("thing",)
+    assert 'exclude = ["thing"]' in (sibling / "shared.lock").read_text()
+    assert not (sibling / "src/demo_mcp/thing.py").exists()
+    assert run(sync, sibling, "--check", "--latest") == 0
+
+
+def test_excluding_a_module_the_manifest_lacks_is_an_error(github, sibling, capsys):
+    # A typo would otherwise exclude nothing, silently, and the unwanted files would arrive.
+    sync, _, _ = github
+    exclude(sibling, "thnig")
+    assert run(sync, sibling) == 2
+    err = capsys.readouterr().err
+    assert "'thnig'" in err and "it has: extra, thing" in err
+    assert sorted(p.name for p in sibling.rglob("*") if p.is_file()) == ["shared.lock"]  # nothing written
+
+
+def test_a_format_1_manifest_still_syncs(github, sibling):
+    # A sibling locked to a commit from before modules existed keeps working until it updates.
+    sync, commits, _ = github
+    commits[OLD]["shared.toml"] = MANIFEST_V1
+    assert run(sync, sibling) == 0 and run(sync, sibling, "--check") == 0
+    assert (sibling / "src/demo_mcp/thing.py").exists()
+
+
+def test_source_honors_the_siblings_exclude(github, sibling, tmp_path):
+    sync, commits, state = github
+    shared = tmp_path / "mcp-server-shared"
+    for path, content in commits[NEW].items():
+        (shared / path).parent.mkdir(parents=True, exist_ok=True)
+        (shared / path).write_bytes(content)
+    exclude(sibling, "extra")
+    assert run(sync, sibling, "--source", str(shared)) == 0
+    assert (sibling / "src/demo_mcp/thing.py").exists()
+    assert not (sibling / "src/demo_mcp/extra.py").exists()
+    assert state["requests"] == 0
+
+
+@pytest.mark.parametrize(
+    ("line", "message"),
+    [
+        ('exclude = "thing"\n', "list of module names"),
+        ("exclude = [1]\n", "list of module names"),
+        ('exclude = ["no-dashes"]\n', 'module names like "remote"'),
+    ],
+)
+def test_a_bad_exclude_is_explained(github, sibling, capsys, line, message):
+    sync, _, _ = github
+    (sibling / "shared.lock").write_text((sibling / "shared.lock").read_text() + line)
+    assert run(sync, sibling, "--check") == 2
+    assert message in capsys.readouterr().err
+
+
+def test_a_lock_with_exclude_round_trips(github, sibling):
+    sync, _, _ = github
+    exclude(sibling, "thing", "extra", "thing")
+    lock = sync.read_lock(sibling)
+    assert lock.exclude == ("thing", "extra")  # repeats dropped, order kept
+    (sibling / "shared.lock").write_text(lock.dump())
+    assert sync.read_lock(sibling) == lock
+
+
+def test_a_bad_module_name_in_the_manifest_is_refused(github, sibling, capsys):
+    sync, commits, _ = github
+    commits[OLD]["shared.toml"] = MANIFEST.replace(b'module = "extra"', b"module = 3")
+    assert run(sync, sibling) == 2
+    assert 'module must be a name like "remote"' in capsys.readouterr().err

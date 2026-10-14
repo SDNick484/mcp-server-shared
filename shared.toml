@@ -5,45 +5,57 @@
 # shared.lock). With `render = true`, `__PKG__` in the file's contents is
 # replaced too; without it the file is copied byte for byte.
 #
+# `module` groups a shared module with its test. A sibling that doesn't use one
+# lists it in its shared.lock (`exclude = ["remote"]`) and gets neither file.
+# An entry without `module` goes to every sibling, with no way to opt out.
+#
 # To share another file: add it here, push to main, and run
 # `python scripts/sync_shared.py --update` in each sibling. Dropping an entry
 # doesn't delete the sibling's copy; delete those by hand.
 
-format = 1  # bump only with a matching change to scripts/sync_shared.py (see FORMAT there)
+format = 2  # bump only with a matching change to scripts/sync_shared.py (see FORMAT there)
 
 [[file]]
 source = "src/mcp_shared/remote.py"
+module = "remote"
 target = "src/__PKG__/remote.py"
 
 [[file]]
 source = "src/mcp_shared/logsafe.py"
+module = "logsafe"
 target = "src/__PKG__/logsafe.py"
 
 [[file]]
 source = "src/mcp_shared/tasks.py"
+module = "tasks"
 target = "src/__PKG__/tasks.py"
 
 [[file]]
 source = "src/mcp_shared/ratelimit.py"
+module = "ratelimit"
 target = "src/__PKG__/ratelimit.py"
 
 [[file]]
 source = "templates/tests/test_remote.py"
+module = "remote"
 target = "tests/test_remote.py"
 render = true
 
 [[file]]
 source = "templates/tests/test_logsafe.py"
+module = "logsafe"
 target = "tests/test_logsafe.py"
 render = true
 
 [[file]]
 source = "templates/tests/test_tasks.py"
+module = "tasks"
 target = "tests/test_tasks.py"
 render = true
 
 [[file]]
 source = "templates/tests/test_ratelimit.py"
+module = "ratelimit"
 target = "tests/test_ratelimit.py"
 render = true
 

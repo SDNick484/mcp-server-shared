@@ -19,8 +19,11 @@ The single source of truth for code the sibling MCP servers each carry a copy of
 | (each) | `templates/tests/test_*.py` | `tests/test_*.py` | each module's tests, with `__PKG__` for the package name |
 | (none) | `scripts/sync_shared.py` | `scripts/sync_shared.py` | the script that copies all of the above |
 
-A sibling takes every module unless its `shared.lock` excludes it (see below). The LAN-only
-servers (misterfpga, batocera, pixelcade) exclude `remote`.
+A sibling takes every module unless its `shared.lock` excludes it (see below). Batocera and
+Pixelcade exclude `remote`: they only ever speak stdio, so they have no HTTP transport for it to
+serve. The test is whether a server has a `serve --http` mode, not whether it's LAN-only:
+MiSTer is LAN-only too, but `serve --http` (its local Alpine service) runs on `remote.py`, so
+it keeps the module.
 
 [`shared.toml`](shared.toml) is that table in machine-readable form, and the script reads it,
 so sharing another file is an edit there and nothing else.
@@ -122,7 +125,7 @@ Removing an entry doesn't delete the siblings' copies; delete those by hand.
 mkdir -p scripts
 curl -fsSLo scripts/sync_shared.py https://raw.githubusercontent.com/SDNick484/mcp-server-shared/main/scripts/sync_shared.py
 printf 'repo = "SDNick484/mcp-server-shared"\ncommit = "%040d"\npackage = "newthing_mcp"\n' 0 > shared.lock
-# LAN-only? Then it has no use for the Cloudflare Access transport:
+# stdio only, with no `serve --http`? Then it has no use for remote.py:
 echo 'exclude = ["remote"]' >> shared.lock
 python scripts/sync_shared.py --update   # replaces the placeholder commit with main's
 ```

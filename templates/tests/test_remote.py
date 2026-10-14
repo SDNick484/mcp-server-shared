@@ -32,7 +32,7 @@ KEY = rsa.generate_private_key(public_exponent=65537, key_size=2048)
 
 def token(**overrides: object) -> str:
     now = int(time.time())
-    claims = {"iss": f"https://{TEAM}", "aud": [AUD], "iat": now, "exp": now + 300, "email": "nick@example.com"}
+    claims = {"iss": f"https://{TEAM}", "aud": [AUD], "iat": now, "exp": now + 300, "email": "user@example.com"}
     claims.update(overrides)
     return jwt.encode({k: v for k, v in claims.items() if v is not None}, KEY, algorithm="RS256")
 
@@ -64,11 +64,11 @@ def test_environment_then_flags():
         "MCP_PUBLIC_HOSTS": "mcp.example.com",
         "CF_ACCESS_TEAM_DOMAIN": f"https://{TEAM}/",
         "CF_ACCESS_AUD": f"{AUD}, other",
-        "MCP_ALLOWED_EMAILS": "Nick@Example.com",
+        "MCP_ALLOWED_EMAILS": "User@Example.com",
     }
     cfg = parse([], env)
     assert (cfg.bind, cfg.port, cfg.public_hosts) == ("10.0.0.5", 9000, ("mcp.example.com",))
-    assert cfg.access == remote.AccessPolicy(TEAM, (AUD, "other"), frozenset({"nick@example.com"}))
+    assert cfg.access == remote.AccessPolicy(TEAM, (AUD, "other"), frozenset({"user@example.com"}))
     assert parse(["--port", "9100", "--bind", "127.0.0.1"], env).port == 9100
 
 
@@ -94,7 +94,7 @@ def test_insecure_flag_is_an_explicit_opt_out():
 @pytest.mark.anyio
 async def test_valid_assertion():
     claims = await remote.AccessVerifier(POLICY, public_key).verify(token())
-    assert claims["email"] == "nick@example.com"
+    assert claims["email"] == "user@example.com"
 
 
 @pytest.mark.anyio
@@ -129,8 +129,8 @@ async def test_unsigned_tokens_are_denied():
 
 @pytest.mark.anyio
 async def test_email_allow_list():
-    policy = remote.AccessPolicy(TEAM, (AUD,), frozenset({"nick@example.com"}))
-    await remote.AccessVerifier(policy, public_key).verify(token(email="NICK@example.com"))
+    policy = remote.AccessPolicy(TEAM, (AUD,), frozenset({"user@example.com"}))
+    await remote.AccessVerifier(policy, public_key).verify(token(email="USER@example.com"))
     with pytest.raises(remote.AccessDenied, match="not in MCP_ALLOWED_EMAILS"):
         await remote.AccessVerifier(policy, public_key).verify(token(email="guest@example.com"))
 

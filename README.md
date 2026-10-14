@@ -12,6 +12,7 @@ The single source of truth for code the sibling MCP servers each carry a copy of
 | `src/mcp_shared/remote.py` | `src/<pkg>/remote.py` | Streamable HTTP behind Cloudflare Access |
 | `src/mcp_shared/logsafe.py` | `src/<pkg>/logsafe.py` | log redaction (addresses, MACs, secrets) |
 | `src/mcp_shared/tasks.py` | `src/<pkg>/tasks.py` | `stop_task`: stopping a task that drops a cancel |
+| `src/mcp_shared/ratelimit.py` | `src/<pkg>/ratelimit.py` | `TokenBucket` and `refusal`: per-device rate limits |
 | `templates/tests/test_*.py` | `tests/test_*.py` | their tests, with `__PKG__` for the package name |
 | `scripts/sync_shared.py` | `scripts/sync_shared.py` | the script that copies all of the above |
 

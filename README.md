@@ -4,17 +4,23 @@ The single source of truth for code the sibling MCP servers each carry a copy of
 [mcp-server-onkyo](https://github.com/SDNick484/mcp-server-onkyo),
 [-shieldtv](https://github.com/SDNick484/mcp-server-shieldtv),
 [-harmony](https://github.com/SDNick484/mcp-server-harmony),
-[-sofabaton](https://github.com/SDNick484/mcp-server-sofabaton) and
-[-webos](https://github.com/SDNick484/mcp-server-webos).
+[-sofabaton](https://github.com/SDNick484/mcp-server-sofabaton),
+[-webos](https://github.com/SDNick484/mcp-server-webos),
+[-misterfpga](https://github.com/SDNick484/mcp-server-misterfpga),
+[-batocera](https://github.com/SDNick484/mcp-server-batocera) and
+[-pixelcade](https://github.com/SDNick484/mcp-server-pixelcade).
 
-| Here | In each sibling | What it is |
-|---|---|---|
-| `src/mcp_shared/remote.py` | `src/<pkg>/remote.py` | Streamable HTTP behind Cloudflare Access |
-| `src/mcp_shared/logsafe.py` | `src/<pkg>/logsafe.py` | log redaction (addresses, MACs, secrets) |
-| `src/mcp_shared/tasks.py` | `src/<pkg>/tasks.py` | `stop_task`: stopping a task that drops a cancel |
-| `src/mcp_shared/ratelimit.py` | `src/<pkg>/ratelimit.py` | `TokenBucket` and `refusal`: per-device rate limits |
-| `templates/tests/test_*.py` | `tests/test_*.py` | their tests, with `__PKG__` for the package name |
-| `scripts/sync_shared.py` | `scripts/sync_shared.py` | the script that copies all of the above |
+| Module | Here | In each sibling | What it is |
+|---|---|---|---|
+| `remote` | `src/mcp_shared/remote.py` | `src/<pkg>/remote.py` | Streamable HTTP behind Cloudflare Access |
+| `logsafe` | `src/mcp_shared/logsafe.py` | `src/<pkg>/logsafe.py` | log redaction (addresses, MACs, secrets) |
+| `tasks` | `src/mcp_shared/tasks.py` | `src/<pkg>/tasks.py` | `stop_task`: stopping a task that drops a cancel |
+| `ratelimit` | `src/mcp_shared/ratelimit.py` | `src/<pkg>/ratelimit.py` | `TokenBucket` and `refusal`: per-device rate limits |
+| (each) | `templates/tests/test_*.py` | `tests/test_*.py` | each module's tests, with `__PKG__` for the package name |
+| (none) | `scripts/sync_shared.py` | `scripts/sync_shared.py` | the script that copies all of the above |
+
+A sibling takes every module unless its `shared.lock` excludes it (see below). The LAN-only
+servers (misterfpga, batocera, pixelcade) exclude `remote`.
 
 [`shared.toml`](shared.toml) is that table in machine-readable form, and the script reads it,
 so sharing another file is an edit there and nothing else.
@@ -36,12 +42,14 @@ Each sibling has a `shared.lock`:
 ```toml
 repo = "SDNick484/mcp-server-shared"
 commit = "<40-character SHA of this repo>"
-package = "webos_mcp"
+package = "batocera_mcp"
+exclude = ["remote"]   # optional: shared modules this sibling doesn't take
 ```
 
 `python scripts/sync_shared.py` reads `shared.toml` *at that commit*, fetches each listed file
-from `raw.githubusercontent.com` at that commit, puts the package name into each target path
-(and, for the test templates, the file's contents), and writes whatever differs.
+from `raw.githubusercontent.com` at that commit, skipping the modules the lock excludes, puts
+the package name into each target path (and, for the test templates, the file's contents),
+and writes whatever differs.
 
 | Command (in a sibling) | Does |
 |---|---|
@@ -66,9 +74,25 @@ Choices worth knowing about, and why:
 - **The script syncs itself.** It's in the manifest like everything else. If a future
   `shared.toml` needs a newer script (its `format` goes up), the old script fetches just the new
   version of itself and asks you to run the command again.
+- **Siblings opt out of a module, not in.** A newly shared module reaches every sibling by
+  default, and its scheduled run goes red until it syncs; a sibling that doesn't want one says
+  so in its lock. Opt-in would let a new module quietly never arrive anywhere.
+- **Excluded by module, not by path.** `remote` covers `remote.py` *and* `test_remote.py`, so
+  the code and its test can't be split by accident. A name the manifest doesn't have
+  (a typo, or a module since renamed) is an error, not a silent no-op.
+- **Excluding means "not managed", not "delete".** If a sibling already has the files of a
+  module it now excludes, the script leaves them alone: neither written nor checked. Delete
+  them by hand if they're unused.
 - **Exit codes:** 0 in sync, 1 drift, 2 anything else (network, a bad lock, bad arguments).
 
 ## Workflows
+
+### Upgrading from format 1
+
+`shared.toml` went to format 2 when modules and `exclude` were added. In a sibling whose script
+is older, the first `--update` brings in only the new script and asks you to run it again; the
+second run does the sync. Add `exclude` to the lock after that, not before: until the new script
+is in, nothing reads it.
 
 ### Changing a shared file
 
@@ -86,8 +110,10 @@ Until step 4 reaches a sibling, its scheduled run goes red. That's the reminder.
 
 ### Sharing another file
 
-Add a `[[file]]` to `shared.toml` (`render = true` if it needs `__PKG__` filled in). For a new
-test template, also add its rendered path to `.gitignore` here. Then do steps 3 and 4 above.
+Add a `[[file]]` to `shared.toml` with a `module` name, and its test template under the same
+name (`render = true` if it needs `__PKG__` filled in). For a new test template, also add its
+rendered path to `.gitignore` here. Then do steps 3 and 4 above; a sibling that doesn't want the
+new module adds its name to `exclude` in that step instead.
 Removing an entry doesn't delete the siblings' copies; delete those by hand.
 
 ### Adding a sibling
@@ -96,6 +122,8 @@ Removing an entry doesn't delete the siblings' copies; delete those by hand.
 mkdir -p scripts
 curl -fsSLo scripts/sync_shared.py https://raw.githubusercontent.com/SDNick484/mcp-server-shared/main/scripts/sync_shared.py
 printf 'repo = "SDNick484/mcp-server-shared"\ncommit = "%040d"\npackage = "newthing_mcp"\n' 0 > shared.lock
+# LAN-only? Then it has no use for the Cloudflare Access transport:
+echo 'exclude = ["remote"]' >> shared.lock
 python scripts/sync_shared.py --update   # replaces the placeholder commit with main's
 ```
 

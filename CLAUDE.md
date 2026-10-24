@@ -13,7 +13,7 @@ software/systems engineer: be technical and concrete, with specific examples.
 
 ## Layout
 
-- `src/mcp_shared/remote.py`, `logsafe.py`, `tasks.py`, `ratelimit.py`: the shared modules, copied byte for byte
+- `src/mcp_shared/remote.py`, `logsafe.py`, `tasks.py`, `ratelimit.py`, `registry.py`: the shared modules, copied byte for byte
   into each sibling's package. They must not import anything from their own package
   (`mcp_shared` or a sibling's), since the bytes have to work in all of them.
 - `templates/tests/`: the shared tests, with `__PKG__` for the package name. Excluded from ruff

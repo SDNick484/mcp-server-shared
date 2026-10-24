@@ -20,11 +20,12 @@ The single source of truth for code the sibling MCP servers each carry a copy of
 | (each) | `templates/tests/test_*.py` | `tests/test_*.py` | each module's tests, with `__PKG__` for the package name |
 | (none) | `scripts/sync_shared.py` | `scripts/sync_shared.py` | the script that copies all of the above |
 
-A sibling takes every module unless its `shared.lock` excludes it (see below). Batocera and
-Pixelcade exclude `remote`: they only ever speak stdio, so they have no HTTP transport for it to
-serve. The test is whether a server has a `serve --http` mode, not whether it's LAN-only:
-MiSTer is LAN-only too, but `serve --http` (its local Alpine service) runs on `remote.py`, so
-it keeps the module.
+A sibling takes every module unless its `shared.lock` excludes it (see below). Today every
+sibling takes all of them: each has a `serve --http` mode, and that runs on `remote.py`.
+Batocera and Pixelcade excluded `remote` while they only spoke stdio, and took it when they
+became Alpine services. The test is whether a server has a `serve --http` mode, not whether
+it's published: MiSTer stays LAN-only (no tunnel route), but its local Alpine service runs on
+`remote.py`, so it keeps the module too.
 
 [`shared.toml`](shared.toml) is that table in machine-readable form, and the script reads it,
 so sharing another file is an edit there and nothing else.
@@ -46,8 +47,8 @@ Each sibling has a `shared.lock`:
 ```toml
 repo = "SDNick484/mcp-server-shared"
 commit = "<40-character SHA of this repo>"
-package = "batocera_mcp"
-exclude = ["remote"]   # optional: shared modules this sibling doesn't take
+package = "newthing_mcp"
+exclude = ["remote"]   # optional: shared modules this sibling doesn't take (none do today)
 ```
 
 `python scripts/sync_shared.py` reads `shared.toml` *at that commit*, fetches each listed file

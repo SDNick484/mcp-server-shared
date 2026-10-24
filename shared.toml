@@ -36,6 +36,11 @@ module = "ratelimit"
 target = "src/__PKG__/ratelimit.py"
 
 [[file]]
+source = "src/mcp_shared/registry.py"
+module = "registry"
+target = "src/__PKG__/registry.py"
+
+[[file]]
 source = "templates/tests/test_remote.py"
 module = "remote"
 target = "tests/test_remote.py"
@@ -57,6 +62,12 @@ render = true
 source = "templates/tests/test_ratelimit.py"
 module = "ratelimit"
 target = "tests/test_ratelimit.py"
+render = true
+
+[[file]]
+source = "templates/tests/test_registry.py"
+module = "registry"
+target = "tests/test_registry.py"
 render = true
 
 # The sync script is shared too, so `--update` brings in a new version of itself.

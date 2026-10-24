@@ -1,6 +1,6 @@
 """Fixtures for mcp-server-shared's own test run.
 
-The shared tests (tests/test_remote.py, test_logsafe.py, test_tasks.py) aren't
+The shared tests (tests/test_remote.py, test_logsafe.py, test_tasks.py, ...) aren't
 in git here: they're rendered from templates/tests/ for this repo's package by
 `python scripts/sync_shared.py --source . --package mcp_shared`, exactly as each
 sibling gets them. They rely on every sibling's conftest providing anyio_backend,

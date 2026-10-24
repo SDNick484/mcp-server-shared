@@ -23,9 +23,10 @@ software/systems engineer: be technical and concrete, with specific examples.
   git-ignored.
 - `shared.toml`: the manifest, which files go where, grouped by `module` (a module's code and its
   test share a name). Add a file here, not in the script. A sibling's `shared.lock` can
-  `exclude` modules by that name. Batocera and Pixelcade exclude `remote` because they're
-  stdio-only. MiSTer is LAN-only but keeps it: its `serve --http` uses it. Exclude `remote`
-  only where nothing imports it.
+  `exclude` modules by that name. No sibling excludes anything today: all eight have
+  `serve --http`, which uses `remote`. (Batocera and Pixelcade excluded it while stdio-only.)
+  MiSTer is LAN-only but keeps it for the same reason. Exclude `remote` only where nothing
+  imports it.
 - `scripts/sync_shared.py`: standard library only, Python 3.11+. It's shared too (it syncs itself).
 
 ## Rules for changes

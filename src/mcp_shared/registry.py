@@ -31,7 +31,7 @@ from __future__ import annotations
 
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
-from typing import Literal
+from typing import Any, Literal
 
 # How sure the claim is, judged from its source (not from hardware; that's Status):
 #   high   - read directly in the code that implements it
@@ -49,6 +49,19 @@ class Assumption:
     confidence: Confidence
     status: Status = "simulator-only"
     note: str = ""
+
+    def __post_init__(self) -> None:
+        # The Literal types only bind under mypy. Checked here too, so a typo'd status in a sibling's
+        # ASSUMPTIONS ("hardware-verfied") fails at import rather than quietly matching no query.
+        if self.confidence not in ("high", "medium", "low"):
+            raise ValueError(
+                f"assumption {self.id!r}: confidence {self.confidence!r} is not one of ('high', 'medium', 'low')"
+            )
+        if self.status not in ("simulator-only", "hardware-verified", "hardware-contradicted"):
+            raise ValueError(
+                f"assumption {self.id!r}: status {self.status!r} is not one of"
+                " ('simulator-only', 'hardware-verified', 'hardware-contradicted')"
+            )
 
 
 def by_id(assumptions: Iterable[Assumption]) -> dict[str, Assumption]:
@@ -97,3 +110,28 @@ def doctor_lines(unverified: Sequence[str], contradicted: Sequence[str], verbose
         more = " (doctor --verbose lists them)" if unverified else ""
         lines.append(f"Not yet confirmed on hardware: {len(unverified)}{more}")
     return lines
+
+
+def doctor_summary(assumptions: Iterable[Assumption]) -> dict[str, Any]:
+    """doctor ``--json``'s view of the registry: every count, and every list in full.
+
+    The machine-readable counterpart of ``doctor_lines``, so a script (or CI) can
+    read the registry without parsing text, e.g. fail when ``contradicted_count``
+    rises. The keys are a contract with whatever reads the JSON; add, don't rename.
+    Lists keep the registry's order. Unverified entries carry confidence and source
+    (what decides which to check on hardware next); checked ones carry the note
+    that says what hardware showed.
+    """
+    items = tuple(assumptions)
+    pending = unverified(items)
+    wrong = contradicted(items)
+    verified = [a for a in items if a.status == "hardware-verified"]
+    return {
+        "total": len(items),
+        "unverified_count": len(pending),
+        "contradicted_count": len(wrong),
+        "hardware_verified_count": len(verified),
+        "unverified": [{"id": a.id, "claim": a.claim, "confidence": a.confidence, "source": a.source} for a in pending],
+        "contradicted": [{"id": a.id, "claim": a.claim, "note": a.note} for a in wrong],
+        "hardware_verified": [{"id": a.id, "claim": a.claim, "note": a.note} for a in verified],
+    }

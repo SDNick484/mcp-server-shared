@@ -88,6 +88,9 @@ def github(monkeypatch):
         except KeyError:
             raise sync.SyncError(f"GET {url}: HTTP 404 Not Found") from None
 
+    monkeypatch.delenv("GITHUB_TOKEN", raising=False)
+    monkeypatch.delenv("GH_TOKEN", raising=False)
+    monkeypatch.setattr(sync, "_GH_CLI_TOKEN", None)
     monkeypatch.setattr(sync, "_get", fake_get)
     return sync, commits, state
 
@@ -225,7 +228,10 @@ def test_a_bad_lock_is_explained(github, sibling, capsys, lock, message):
     assert message in capsys.readouterr().err
 
 
-@pytest.mark.parametrize("args", [["--latest"], ["--update", "--check"], ["--source", ".", "--update"]])
+@pytest.mark.parametrize(
+    "args",
+    [["--latest"], ["--update", "--check"], ["--source", ".", "--update"], ["--dry-run", "--check"]],
+)
 def test_contradictory_flags_are_refused(github, sibling, args):
     sync, _, _ = github
     with pytest.raises(SystemExit) as exc:
@@ -260,6 +266,61 @@ def test_the_token_goes_to_the_api_only(monkeypatch):
         "https://api.github.com/repos/o/r/commits/main": "Bearer t0ken",
         "https://raw.githubusercontent.com/o/r/abc/f.py": None,
     }
+
+
+def test_github_token_falls_back_to_gh_cli_and_caches(monkeypatch):
+    sync = load_script()
+    monkeypatch.delenv("GITHUB_TOKEN", raising=False)
+    monkeypatch.delenv("GH_TOKEN", raising=False)
+    calls = 0
+
+    def fake_check_output(cmd, *, text, stderr, timeout):
+        nonlocal calls
+        calls += 1
+        assert cmd == ["gh", "auth", "token"]
+        assert text is True
+        assert timeout == 5
+        return "gh-cli-token\n"
+
+    monkeypatch.setattr(sync.shutil, "which", lambda name: "/usr/bin/gh" if name == "gh" else None)
+    monkeypatch.setattr(sync.subprocess, "check_output", fake_check_output)
+    assert sync._GH_CLI_TOKEN is False
+    assert sync._github_token() == "gh-cli-token"
+    assert sync._GH_CLI_TOKEN == "gh-cli-token"
+    assert sync._github_token() == "gh-cli-token"
+    assert calls == 1  # cached on second call
+
+    # Env var takes precedence over cached CLI token.
+    monkeypatch.setenv("GH_TOKEN", "env-token")
+    assert sync._github_token() == "env-token"
+
+
+@pytest.mark.parametrize(
+    "exc",
+    [
+        FileNotFoundError("no gh"),
+        TimeoutError("timed out"),
+        RuntimeError("called process error"),
+    ],
+)
+def test_github_token_handles_gh_cli_failure_gracefully(monkeypatch, exc):
+    import subprocess
+
+    sync = load_script()
+    monkeypatch.delenv("GITHUB_TOKEN", raising=False)
+    monkeypatch.delenv("GH_TOKEN", raising=False)
+    monkeypatch.setattr(sync.shutil, "which", lambda name: "/usr/bin/gh")
+
+    def fail(*_args, **_kwargs):
+        if isinstance(exc, TimeoutError):
+            raise subprocess.TimeoutExpired(["gh", "auth", "token"], 5)
+        if isinstance(exc, RuntimeError):
+            raise subprocess.CalledProcessError(1, ["gh", "auth", "token"])
+        raise exc
+
+    monkeypatch.setattr(sync.subprocess, "check_output", fail)
+    assert sync._github_token() is None
+    assert sync._GH_CLI_TOKEN is None
 
 
 def test_the_lock_round_trips(github, sibling):
@@ -374,3 +435,102 @@ def test_a_bad_module_name_in_the_manifest_is_refused(github, sibling, capsys):
     commits[OLD]["shared.toml"] = MANIFEST.replace(b'module = "extra"', b"module = 3")
     assert run(sync, sibling) == 2
     assert 'module must be a name like "remote"' in capsys.readouterr().err
+
+
+# --- orphan detection -----------------------------------------------------------------------------
+def test_orphaned_shared_files_are_reported_while_sibling_and_excluded_files_are_ignored(github, sibling, capsys):
+    sync, commits, _ = github
+    marker = "Shared by " + "the sibling servers"
+    commits[OLD]["src/mcp_shared/extra.py"] = f'"""{marker}."""\nEXTRA = True\n'.encode()
+    assert run(sync, sibling) == 0
+
+    # Sibling-owned files in src/<pkg>/ and tests/ (without the shared header marker).
+    (sibling / "src/demo_mcp/own_module.py").write_text('"""Sibling-owned module."""\n')
+    (sibling / "tests/test_own_module.py").write_text('"""Sibling-owned test."""\n')
+    # Previously synced shared test that will also be dropped from the manifest.
+    (sibling / "tests/test_old_shared.py").write_text(f'"""{marker}."""\n')
+
+    # Drop "extra" from NEW's manifest so src/demo_mcp/extra.py becomes an orphan on --update.
+    manifest_without_extra = MANIFEST.split(b'[[file]]\nsource = "src/mcp_shared/extra.py"')[0]
+    commits[NEW]["shared.toml"] = manifest_without_extra
+    capsys.readouterr()
+
+    assert run(sync, sibling, "--update") == 0
+    out = capsys.readouterr().out
+    assert "(shared files: src/demo_mcp/extra.py is no longer in shared.toml; remove manually if unused)" in out
+    assert "(shared files: tests/test_old_shared.py is no longer in shared.toml; remove manually if unused)" in out
+    assert "own_module" not in out
+
+    # Excluding a module that IS in the manifest must not flag its existing files as orphans.
+    commits[NEW]["shared.toml"] = MANIFEST
+    (sibling / "src/demo_mcp/thing.py").write_text(f'"""{marker}."""\n')
+    (sibling / "tests/test_thing.py").write_text(f'"""{marker}."""\n')
+    (sibling / "src/demo_mcp/extra.py").unlink()
+    (sibling / "tests/test_old_shared.py").unlink()
+    exclude(sibling, "thing")
+    capsys.readouterr()
+
+    assert run(sync, sibling) == 0
+    out = capsys.readouterr().out
+    assert "is no longer in shared.toml" not in out
+    assert sync.find_orphans(sibling, "demo_mcp", {"src/demo_mcp/extra.py": b""}, ("thing",)) == []
+
+
+# --- dry-run --------------------------------------------------------------------------------------
+def test_dry_run_sync_and_update_report_changes_and_never_write(github, sibling, capsys):
+    sync, commits, _ = github
+
+    # Default sync --dry-run when files are missing: exits 1 and writes nothing.
+    assert run(sync, sibling, "--dry-run") == 1
+    out = capsys.readouterr().out
+    assert "src/demo_mcp/thing.py (added)" in out
+    assert "tests/test_thing.py (added)" in out
+    assert sorted(p.name for p in sibling.rglob("*") if p.is_file()) == ["shared.lock"]
+
+    # After syncing, --dry-run exits 0.
+    assert run(sync, sibling) == 0
+    capsys.readouterr()
+    assert run(sync, sibling, "--dry-run") == 0
+    assert "nothing to change" in capsys.readouterr().out
+
+    # Local edit: --dry-run exits 1, reports (updated), and leaves the file untouched.
+    (sibling / "src/demo_mcp/thing.py").write_text("edited locally\n")
+    assert run(sync, sibling, "--dry-run") == 1
+    assert "src/demo_mcp/thing.py (updated)" in capsys.readouterr().out
+    assert (sibling / "src/demo_mcp/thing.py").read_text() == "edited locally\n"
+
+    # Restore clean state at OLD, then test --update --dry-run against NEW.
+    assert run(sync, sibling) == 0
+    capsys.readouterr()
+    assert run(sync, sibling, "--update", "--dry-run") == 1
+    out = capsys.readouterr().out
+    assert f"{OLD[:7]} -> {NEW[:7]}" in out
+    assert "src/demo_mcp/thing.py (updated)" in out
+    assert f'commit = "{OLD}"' in (sibling / "shared.lock").read_text()
+    assert (sibling / "src/demo_mcp/thing.py").read_text().endswith('VERSION = "1"\n')
+
+    # After actual --update, --update --dry-run exits 0.
+    assert run(sync, sibling, "--update") == 0
+    capsys.readouterr()
+    assert run(sync, sibling, "--update", "--dry-run") == 0
+    out = capsys.readouterr().out
+    assert f"already at {NEW[:7]}" in out
+    assert "no files changed" in out
+
+    # Format bump with --dry-run never writes scripts/sync_shared.py.
+    commits[NEW]["shared.toml"] = MANIFEST.replace(b"format = 2", f"format = {sync.FORMAT + 1}".encode())
+    commits[NEW]["scripts/sync_shared.py"] = b"# newer script\n"
+    assert run(sync, sibling, "--update", "--dry-run") == 2
+    assert not (sibling / "scripts/sync_shared.py").exists()
+
+
+def test_dry_run_update_exits_1_when_only_lock_would_move(github, sibling, capsys):
+    sync, commits, _ = github
+    commits[NEW] = dict(commits[OLD])
+    assert run(sync, sibling) == 0
+    capsys.readouterr()
+    assert run(sync, sibling, "--update", "--dry-run") == 1
+    out = capsys.readouterr().out
+    assert f"{OLD[:7]} -> {NEW[:7]}" in out
+    assert "no files changed" in out
+    assert f'commit = "{OLD}"' in (sibling / "shared.lock").read_text()

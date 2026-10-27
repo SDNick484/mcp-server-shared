@@ -211,7 +211,7 @@ class AccessVerifier:
         if key_resolver is None:
             client = jwt.PyJWKClient(policy.certs_url, cache_jwk_set=True, lifespan=3600)
 
-            async def resolve(token: str) -> Any:
+            async def resolve(token: str) -> Any:  # pragma: no cover
                 key = await anyio.to_thread.run_sync(client.get_signing_key_from_jwt, token)
                 return key.key
 
@@ -398,7 +398,9 @@ def build_app(
     return AccessMiddleware(app, verifier, local_only=cfg.local_only, health_check=health_check)
 
 
-def serve_http(mcp: MCPServer, cfg: HttpConfig, *, health_check: HealthChecker | None = None) -> None:
+def serve_http(  # pragma: no cover
+    mcp: MCPServer, cfg: HttpConfig, *, health_check: HealthChecker | None = None
+) -> None:
     """Run until interrupted. The server's lifespan (device connections) runs once, shared by all sessions."""
     import uvicorn
 

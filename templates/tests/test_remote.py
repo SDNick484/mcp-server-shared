@@ -75,6 +75,9 @@ def test_environment_then_flags():
 @pytest.mark.parametrize(
     "argv,env,message",
     [
+        (["--port", "0"], {}, "--port must be between 1 and 65535"),
+        (["--port", "-1"], {}, "--port must be between 1 and 65535"),
+        (["--port", "65536"], {}, "--port must be between 1 and 65535"),
         (["--bind", "0.0.0.0"], {}, "Refusing to serve on 0.0.0.0 without Cloudflare Access"),
         (["--path", "mcp"], {}, "must start with '/'"),
         (["--path", "/healthz"], {}, "can't be /healthz"),
@@ -161,14 +164,18 @@ def tiny_server(starts: list[int]) -> MCPServer:
 
 
 @asynccontextmanager
-async def running(cfg: remote.HttpConfig, starts: list[int]):
+async def running(
+    cfg: remote.HttpConfig,
+    starts: list[int],
+    health_check: remote.HealthChecker | None = None,
+):
     import uvicorn
 
     sock = socket.socket()
     sock.bind(("127.0.0.1", 0))
     port = sock.getsockname()[1]
     verifier = remote.AccessVerifier(POLICY, public_key) if cfg.access else None
-    app = remote.build_app(tiny_server(starts), cfg, verifier)
+    app = remote.build_app(tiny_server(starts), cfg, verifier, health_check=health_check)
     server = uvicorn.Server(uvicorn.Config(app, log_level="warning", lifespan="on"))
     async with anyio.create_task_group() as tg:
         tg.start_soon(server.serve, [sock])
@@ -209,6 +216,55 @@ async def test_health_check_needs_no_assertion():
     async with running(CFG, []) as base, httpx2.AsyncClient() as http:
         resp = await http.get(f"{base}/healthz")
         assert (resp.status_code, resp.json()) == (200, {"status": "ok"})
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    "result,expected_status,expected_body",
+    [
+        (True, 200, {"status": "ok"}),
+        ({"hub": "connected"}, 200, {"status": "ok", "hub": "connected"}),
+        (False, 503, {"status": "degraded", "error": "health check returned False"}),
+        ({"status": "degraded", "hub": "offline"}, 503, {"status": "degraded", "hub": "offline"}),
+        ({"error": "timeout"}, 503, {"status": "degraded", "error": "timeout"}),
+    ],
+)
+async def test_health_check_custom_readiness(result, expected_status, expected_body):
+    async def check():
+        return result
+
+    async with running(CFG, [], health_check=check) as base, httpx2.AsyncClient() as http:
+        resp = await http.get(f"{base}/healthz")
+        assert (resp.status_code, resp.json()) == (expected_status, expected_body)
+
+
+@pytest.mark.anyio
+async def test_health_check_exception_returns_503():
+    async def broken():
+        raise RuntimeError("hub unreachable")
+
+    async with running(CFG, [], health_check=broken) as base, httpx2.AsyncClient() as http:
+        resp = await http.get(f"{base}/healthz")
+        assert (resp.status_code, resp.json()) == (503, {"status": "degraded", "error": "hub unreachable"})
+
+
+@pytest.mark.anyio
+async def test_options_preflight_succeeds_without_assertion():
+    async with running(CFG, []) as base, httpx2.AsyncClient() as http:
+        resp = await http.options(f"{base}/thing/mcp", headers={"origin": "https://claude.ai"})
+        assert resp.status_code == 204
+        assert resp.text == ""
+        assert resp.headers["access-control-allow-origin"] == "https://claude.ai"
+        assert resp.headers["access-control-allow-methods"] == "POST, GET, DELETE, OPTIONS"
+        assert (
+            resp.headers["access-control-allow-headers"]
+            == "content-type, cf-access-jwt-assertion, authorization, mcp-session-id, mcp-protocol-version"
+        )
+        assert resp.headers["access-control-max-age"] == "86400"
+
+        resp_no_origin = await http.options(f"{base}/thing/mcp")
+        assert resp_no_origin.status_code == 204
+        assert resp_no_origin.headers["access-control-allow-origin"] == "*"
 
 
 @pytest.mark.anyio

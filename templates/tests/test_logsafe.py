@@ -36,6 +36,7 @@ def test_addresses_and_macs():
     assert redact("eISCP -> 192.168.1.147 PWR01") == "eISCP -> x.x.x.147 PWR01"
     assert redact("mac 00:09:B0:F7:6C:FD / 0009B0F76CFD") == "mac xx:xx:xx:xx:6C:FD / xxxxxxxx6CFD"
     assert redact("simulator at 127.0.0.1:60128") == "simulator at 127.0.0.1:60128"  # loopback kept
+    assert redact("bound to 0.0.0.0:8000") == "bound to 0.0.0.0:8000"  # unspecified kept
 
 
 def test_lowercase_bare_macs():
@@ -201,6 +202,13 @@ def test_setup_logging_replaces_handlers_rather_than_stacking(root_logger, capsy
     assert len(root_logger.handlers) == 1
     logging.getLogger("dev").info("once")
     assert capsys.readouterr().err == "INFO dev: once\n"
+
+
+def test_formatter_datefmt():
+    fmt = RedactingFormatter("%(asctime)s %(message)s", datefmt="%Y")
+    record = logging.LogRecord("x", logging.INFO, __file__, 1, "at %s", ("192.168.1.2",), None)
+    out = fmt.format(record)
+    assert out.endswith(" at x.x.x.2") and len(out.split()[0]) == 4
 
 
 def test_secrets_are_always_redacted():

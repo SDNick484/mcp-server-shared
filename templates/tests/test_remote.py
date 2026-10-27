@@ -101,6 +101,24 @@ def test_a_public_host_is_fine_with_access():
     parse(["--public-host", "mcp.example.com"], {"CF_ACCESS_TEAM_DOMAIN": TEAM, "CF_ACCESS_AUD": AUD}).check()
 
 
+def test_loopback_recognizes_localhost_ipv6_and_rejects_non_loopback():
+    assert remote.HttpConfig(bind="localhost").loopback is True
+    assert remote.HttpConfig(bind="::1").loopback is True
+    assert remote.HttpConfig(bind="127.0.0.1").loopback is True
+    assert remote.HttpConfig(bind="0.0.0.0").loopback is False
+    assert remote.HttpConfig(bind="device.lan").loopback is False
+    with pytest.raises(remote.ConfigError, match="Refusing to serve on device.lan"):
+        remote.HttpConfig(bind="device.lan").check()
+
+
+def test_certs_url_and_default_verifier_wiring():
+    assert POLICY.certs_url == f"https://{TEAM}/cdn-cgi/access/certs"
+    app = remote.build_app(tiny_server([]), CFG)
+    assert isinstance(app, remote.AccessMiddleware)
+    assert isinstance(app.verifier, remote.AccessVerifier)
+    assert app.verifier.policy == POLICY
+
+
 # --- the verifier ---------------------------------------------------------------
 @pytest.mark.anyio
 async def test_valid_assertion():
@@ -278,7 +296,7 @@ async def test_unexpected_host_is_rejected_even_with_a_valid_assertion():
 
 
 @pytest.mark.anyio
-async def test_wildcard_bind_keeps_host_checks_on():
+async def test_wildcard_bind_keeps_host_checks_on(caplog):
     # Binding to every interface with no --public-host used to switch the
     # Host checks off, leaving a LAN server open to DNS rebinding. Now only
     # loopback (and any --public-host) is accepted.
@@ -286,8 +304,24 @@ async def test_wildcard_bind_keeps_host_checks_on():
     sec = remote.transport_security(cfg)
     assert sec.enable_dns_rebinding_protection is True
     assert "127.0.0.1:*" in sec.allowed_hosts and not any("evil" in h for h in sec.allowed_hosts)
+    assert "Binding to 0.0.0.0 with no --public-host" in caplog.text
     lan = remote.transport_security(remote.HttpConfig(bind="0.0.0.0", public_hosts=("192.168.1.10",)))
     assert "192.168.1.10:*" in lan.allowed_hosts and "http://192.168.1.10:*" in lan.allowed_origins
+
+
+def test_ipv6_bind_and_public_hosts_in_transport_security(caplog):
+    v6_local = remote.transport_security(remote.HttpConfig(bind="::1"))
+    assert "[::1]:*" in v6_local.allowed_hosts
+
+    v6_lan = remote.transport_security(
+        remote.HttpConfig(bind="2001:db8::10", public_hosts=("[2001:db8::10]",), insecure_no_auth=True)
+    )
+    assert "[2001:db8::10]:*" in v6_lan.allowed_hosts
+    assert "http://[2001:db8::10]:*" in v6_lan.allowed_origins
+
+    v6_wild = remote.transport_security(remote.HttpConfig(bind="::", insecure_no_auth=True))
+    assert "[::]:*" not in v6_wild.allowed_hosts
+    assert "Binding to :: with no --public-host" in caplog.text
 
 
 # --- no Access: this machine only ----------------------------------------------------

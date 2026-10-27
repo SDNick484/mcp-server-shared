@@ -13,9 +13,9 @@ The single source of truth for code the sibling MCP servers each carry a copy of
 | Module | Here | In each sibling | What it is |
 |---|---|---|---|
 | `remote` | `src/mcp_shared/remote.py` | `src/<pkg>/remote.py` | Streamable HTTP behind Cloudflare Access |
-| `logsafe` | `src/mcp_shared/logsafe.py` | `src/<pkg>/logsafe.py` | log redaction (addresses, MACs, secrets) |
+| `logsafe` | `src/mcp_shared/logsafe.py` | `src/<pkg>/logsafe.py` | log redaction (IPv4/IPv6 addresses, MACs, secrets incl. URL query tokens; `register_custom_pattern` for device-specific ones) |
 | `tasks` | `src/mcp_shared/tasks.py` | `src/<pkg>/tasks.py` | `stop_task`: stopping a task that drops a cancel |
-| `ratelimit` | `src/mcp_shared/ratelimit.py` | `src/<pkg>/ratelimit.py` | `TokenBucket` and `refusal`: per-device rate limits |
+| `ratelimit` | `src/mcp_shared/ratelimit.py` | `src/<pkg>/ratelimit.py` | `TokenBucket` (`take`, `refund`, async `acquire`/`reserve`), `KeyedTokenBucket` and `refusal`: per-device rate limits |
 | `registry` | `src/mcp_shared/registry.py` | `src/<pkg>/registry.py` | the assumption registry's record, statuses, queries and doctor summary (each sibling's list stays in its `assumptions.py`) |
 | (each) | `templates/tests/test_*.py` | `tests/test_*.py` | each module's tests, with `__PKG__` for the package name |
 | (none) | `scripts/sync_shared.py` | `scripts/sync_shared.py` | the script that copies all of the above |

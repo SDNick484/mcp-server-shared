@@ -1,19 +1,9 @@
-# The files every sibling server carries a copy of, read by scripts/sync_shared.py.
-#
-# Each [[file]] copies `source` (a path in this repo) to `target` (a path in the
-# sibling). `__PKG__` in a target becomes the sibling's package name (from its
-# shared.lock). With `render = true`, `__PKG__` in the file's contents is
-# replaced too; without it the file is copied byte for byte.
-#
-# `module` groups a shared module with its test. A sibling that doesn't use one
-# lists it in its shared.lock (`exclude = ["remote"]`) and gets neither file.
-# An entry without `module` goes to every sibling, with no way to opt out.
-#
-# To share another file: add it here, push to main, and run
-# `python scripts/sync_shared.py --update` in each sibling. Dropping an entry
-# doesn't delete the sibling's copy; delete those by hand.
+format = 2
 
-format = 2  # bump only with a matching change to scripts/sync_shared.py (see FORMAT there)
+# The shared modules: byte-for-byte copies across all siblings.
+# No templating, no string replacement: the source bytes are the destination bytes.
+# Sibling packages are passed via --package; target paths use __PKG__ which is replaced
+# by the package name (e.g. batocera_mcp, harmony_mcp).
 
 [[file]]
 source = "src/mcp_shared/remote.py"
@@ -39,6 +29,16 @@ target = "src/__PKG__/ratelimit.py"
 source = "src/mcp_shared/registry.py"
 module = "registry"
 target = "src/__PKG__/registry.py"
+
+[[file]]
+source = "src/mcp_shared/lookup.py"
+module = "lookup"
+target = "src/__PKG__/lookup.py"
+
+[[file]]
+source = "src/mcp_shared/tools.py"
+module = "tools"
+target = "src/__PKG__/tools.py"
 
 [[file]]
 source = "templates/tests/test_remote.py"
@@ -68,6 +68,19 @@ render = true
 source = "templates/tests/test_registry.py"
 module = "registry"
 target = "tests/test_registry.py"
+render = true
+
+[[file]]
+source = "templates/tests/test_lookup.py"
+module = "lookup"
+target = "tests/test_lookup.py"
+render = true
+
+[[file]]
+source = "templates/tests/test_tools.py"
+module = "tools"
+# Target is test_tool_annotations.py because siblings already have tests/test_tools.py for their MCP tools
+target = "tests/test_tool_annotations.py"
 render = true
 
 # The sync script is shared too, so `--update` brings in a new version of itself.

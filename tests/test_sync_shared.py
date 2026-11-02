@@ -534,3 +534,41 @@ def test_dry_run_update_exits_1_when_only_lock_would_move(github, sibling, capsy
     assert f"{OLD[:7]} -> {NEW[:7]}" in out
     assert "no files changed" in out
     assert f'commit = "{OLD}"' in (sibling / "shared.lock").read_text()
+
+
+def test_local_dir_and_write_files_refuse_traversal_outside_root(tmp_path):
+    import scripts.sync_shared as sync
+
+    root = tmp_path / "repo"
+    root.mkdir()
+    outside = tmp_path / "outside.txt"
+    outside.write_text("secret")
+
+    # Symlink pointing outside
+    (root / "escape.txt").symlink_to(outside)
+    ld = sync.LocalDir(root)
+    with pytest.raises(sync.SyncError, match="resolves outside"):
+        ld.read("escape.txt")
+
+    # write_files with target symlink pointing outside
+    with pytest.raises(sync.SyncError, match="resolves outside"):
+        sync.write_files(root, {"escape.txt": b"overwrite"})
+
+
+def test_self_update_syntax_check(github, sibling):
+    sync, commits, _ = github
+    commits[NEW]["shared.toml"] = MANIFEST.replace(b"format = 2", f"format = {sync.FORMAT + 1}".encode())
+    commits[NEW]["scripts/sync_shared.py"] = b"def unclosed_syntax(:\n"
+    assert run(sync, sibling, "--update") == 2
+    assert not (sibling / "scripts/sync_shared.py").exists()
+
+
+def test_gha_annotation_escaping(monkeypatch, capsys, tmp_path):
+    import scripts.sync_shared as sync
+
+    monkeypatch.setenv("GITHUB_ACTIONS", "true")
+    files = {"target%name\r\n.py": b"content"}
+    found = [("target%name\r\n.py", "differs")]
+    sync._print_report(tmp_path, files, found, "test", "fix")
+    out = capsys.readouterr().out
+    assert "::error file=target%25name%0D%0A.py::target%25name%0D%0A.py differs from test. Fix: fix" in out

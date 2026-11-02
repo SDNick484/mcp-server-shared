@@ -196,6 +196,14 @@ class KeyedTokenBucket:
         """``TokenBucket.acquire`` on ``key``'s bucket."""
         return await self.get(key).acquire(n, timeout)
 
+    @asynccontextmanager
+    async def reserve(
+        self, key: str, n: float = 1.0, timeout: float | None = None, refund_on_error: bool = False
+    ) -> AsyncIterator[float]:
+        """``TokenBucket.reserve`` on ``key``'s bucket."""
+        async with self.get(key).reserve(n, timeout=timeout, refund_on_error=refund_on_error) as waited:
+            yield waited
+
 
 def refusal(what: str, wait: float, device: str | None = None) -> str:
     """The error message for a refused action.

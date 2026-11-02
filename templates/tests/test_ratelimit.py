@@ -351,6 +351,28 @@ async def test_keyed_acquire():
         await k.acquire("den", 2)
 
 
+@pytest.mark.anyio
+async def test_keyed_reserve():
+    now = [0.0]
+    sleeps: list[float] = []
+
+    async def sleep(seconds: float) -> None:
+        sleeps.append(seconds)
+        now[0] += seconds
+
+    k = KeyedTokenBucket(2, 1.0, lambda: now[0], sleep)
+    k.take("den", 2)
+    async with k.reserve("den", 1, refund_on_error=True) as waited:
+        assert waited == pytest.approx(1.0)
+    assert k.take("den") == pytest.approx(1.0)  # spent
+
+    with pytest.raises(ConnectionRefusedError):
+        async with k.reserve("den", 1, refund_on_error=True):
+            raise ConnectionRefusedError
+    # refunded
+    assert k.get("den").tokens == pytest.approx(1.0)
+
+
 @pytest.mark.parametrize(
     ("capacity", "rate"),
     [(0, 1.0), (1, 0), (-1, 1.0), (float("nan"), 1.0), (float("inf"), 1.0), (1.0, float("nan")), (1.0, float("inf"))],

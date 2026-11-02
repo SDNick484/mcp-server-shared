@@ -53,11 +53,14 @@ _IPV6 = re.compile(r"(?:(?<![\w:.])|(?<=\w:))(?:[0-9A-Fa-f]{0,4}:){2,7}[0-9A-Fa-
 # No lookaround lets _MAC start or end next to a colon, so it can't take two-digit
 # groups out of a longer colon run such as an eight-group IPv6 address.
 _MAC = re.compile(r"(?<![0-9A-Fa-f:])((?:[0-9A-Fa-f]{2}[:-]){4})([0-9A-Fa-f]{2}[:-][0-9A-Fa-f]{2})(?![0-9A-Fa-f:])")
-_BARE_MAC = re.compile(r"(?<![0-9A-Za-z])([0-9A-Fa-f]{8})([0-9A-Fa-f]{4})(?![0-9A-Za-z])")
-_URL_PASSWORD = re.compile(r"(\w+://[^/\s:@]+):[^@/\s]+@")
+_BARE_MAC = re.compile(r"(?<![0-9A-Za-z-])([0-9A-Fa-f]{8})([0-9A-Fa-f]{4})(?![0-9A-Za-z-])")
+_URL_PASSWORD = re.compile(r"(\w+://[^/\s:@?#]+):[^@/\s?#]+@")
 # Only directly after ? or &, so "monkey=1" or "access_token=" in prose don't count.
 # The value stops at quotes and brackets too, so a URL quoted in JSON keeps its closing quote.
 _QUERY_SECRET = re.compile(r"(?i)([?&](?:token|api_key|apikey|secret|key|password|pass)=)[^&#\s\"'<>()\[\]{}]+")
+_JSON_SECRET = re.compile(
+    r"""(?i)(["'](?:access_token|refresh_token|client_secret|client-key|api_key|apikey|password|secret)["']\s*:\s*["'])[^"']+(["'])"""
+)
 # A JWT is three base64url parts; its header always starts with {" -> "eyJ".
 _JWT = re.compile(r"\beyJ[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]*")
 _BEARER = re.compile(r"(?i)(\bbearer\s+)[A-Za-z0-9._~+/=-]{8,}")
@@ -65,6 +68,7 @@ _PEM = re.compile(r"-----BEGIN [A-Z0-9 ]+-----.*?-----END [A-Z0-9 ]+-----", re.S
 
 _Replacement = str | Callable[[re.Match[str]], str]
 _CUSTOM_PATTERNS: list[tuple[re.Pattern[str], _Replacement]] = []
+_IDENTIFIER_PATTERNS: list[tuple[re.Pattern[str], _Replacement]] = []
 
 
 def register_custom_pattern(
@@ -95,6 +99,21 @@ def clear_custom_patterns() -> None:
     _CUSTOM_PATTERNS.clear()
 
 
+def register_identifier_pattern(
+    pattern: re.Pattern[str] | str, replacement: str | Callable[[re.Match[str]], str] = "[redacted]"
+) -> None:
+    """Redact a device identifier (UUID, serial number, socket id) when address redaction is on."""
+    compiled = re.compile(pattern) if isinstance(pattern, str) else pattern
+    rule = (compiled, replacement)
+    if rule not in _IDENTIFIER_PATTERNS:
+        _IDENTIFIER_PATTERNS.append(rule)
+
+
+def clear_identifier_patterns() -> None:
+    """Forget every rule ``register_identifier_pattern`` added."""
+    _IDENTIFIER_PATTERNS.clear()
+
+
 def _ip(m: re.Match[str]) -> str:
     first = m.group(1)
     if first in ("127", "0"):
@@ -120,6 +139,7 @@ def redact_secrets(text: str) -> str:
     text = _BEARER.sub(r"\1[redacted]", text)
     text = _URL_PASSWORD.sub(r"\1:***@", text)
     text = _QUERY_SECRET.sub(r"\1***", text)
+    text = _JSON_SECRET.sub(r"\1***\2", text)
     for pattern, replacement in tuple(_CUSTOM_PATTERNS):
         text = pattern.sub(replacement, text)
     return text
@@ -127,6 +147,8 @@ def redact_secrets(text: str) -> str:
 
 def redact(text: str) -> str:
     text = redact_secrets(text)
+    for pattern, replacement in tuple(_IDENTIFIER_PATTERNS):
+        text = pattern.sub(replacement, text)
     # IPv6 before MACs: an eight-group address of two-digit groups is an address, not a MAC.
     text = _IPV6.sub(_ipv6, text)
     text = _IPV4.sub(_ip, text)

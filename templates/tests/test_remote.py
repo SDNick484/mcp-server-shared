@@ -425,19 +425,33 @@ async def test_jwks_dos_protection_throttles_unknown_kid(monkeypatch):
             raise jwt.PyJWKClientError("unknown kid")
 
     monkeypatch.setattr(jwt, "PyJWKClient", FakePyJWKClient)
+    # Start clock near 0 to ensure freshly booted machines (monotonic < 60s) don't falsely throttle first fetch
+    fake_now = [5.0]
+    monkeypatch.setattr(time, "monotonic", lambda: fake_now[0])
+
     verifier = remote.AccessVerifier(POLICY)
     headers1 = {"kid": "unknown-1"}
     headers2 = {"kid": "unknown-2"}
+    headers3 = {"kid": "unknown-3"}
     now = int(time.time())
     claims = {"iss": f"https://{TEAM}", "aud": [AUD], "iat": now, "exp": now + 300, "email": "user@example.com"}
     tok1 = jwt.encode(claims, KEY, algorithm="RS256", headers=headers1)
     tok2 = jwt.encode(claims, KEY, algorithm="RS256", headers=headers2)
+    tok3 = jwt.encode(claims, KEY, algorithm="RS256", headers=headers3)
 
+    # First unknown kid triggers fetch
     with pytest.raises(remote.AccessDenied, match="unknown kid"):
         await verifier.verify(tok1)
     assert calls == 1
 
     # Second unknown kid within min_refetch_interval throttles without network fetch
+    fake_now[0] = 10.0
     with pytest.raises(remote.AccessDenied, match="Unable to find a signing key"):
         await verifier.verify(tok2)
     assert calls == 1
+
+    # After min_refetch_interval passes, network fetch is allowed again
+    fake_now[0] = 70.0
+    with pytest.raises(remote.AccessDenied, match="unknown kid"):
+        await verifier.verify(tok3)
+    assert calls == 2

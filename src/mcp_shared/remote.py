@@ -234,7 +234,7 @@ class AccessVerifier:
         if key_resolver is None:
             client = jwt.PyJWKClient(policy.certs_url, cache_jwk_set=True, lifespan=3600, timeout=10)
             lock = anyio.Lock()
-            last_fetch = 0.0
+            last_fetch: float | None = None
 
             async def resolve(token: str) -> Any:  # pragma: no cover
                 nonlocal last_fetch
@@ -246,7 +246,11 @@ class AccessVerifier:
                         cached_set = client.jwk_set_cache.get()
                         if cached_set is not None:
                             cached_kids = {k.key_id for k in cached_set.keys}
-                            if kid not in cached_kids and (now - last_fetch) < self.min_refetch_interval:
+                            if (
+                                kid not in cached_kids
+                                and last_fetch is not None
+                                and (now - last_fetch) < self.min_refetch_interval
+                            ):
                                 raise jwt.PyJWKClientError(f"Unable to find a signing key that matches {kid!r}")
                     try:
                         key = await anyio.to_thread.run_sync(client.get_signing_key_from_jwt, token)

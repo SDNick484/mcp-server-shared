@@ -16,9 +16,11 @@ from __PKG__ import logsafe
 from __PKG__.logsafe import (
     RedactingFormatter,
     clear_custom_patterns,
+    clear_identifier_patterns,
     redact,
     redact_secrets,
     register_custom_pattern,
+    register_identifier_pattern,
     setup_logging,
 )
 
@@ -30,6 +32,7 @@ def custom_patterns(monkeypatch):
     """An empty custom-rule list per test, put back afterwards, so rules registered (or cleared)
     here don't leak into other tests, and rules a sibling registers at import don't leak in."""
     monkeypatch.setattr(logsafe, "_CUSTOM_PATTERNS", [])
+    monkeypatch.setattr(logsafe, "_IDENTIFIER_PATTERNS", [])
 
 
 def test_addresses_and_macs():
@@ -44,6 +47,7 @@ def test_lowercase_bare_macs():
     assert redact("id 0009b0F76cFd") == "id xxxxxxxx6cFd"  # mixed case: the kept four keep theirs
     # Twelve hex digits inside a longer token (a git SHA, a UUID part) are left alone.
     assert redact("commit 16809a6f0a1b2c3d4e5f") == "commit 16809a6f0a1b2c3d4e5f"
+    assert redact("uuid c5c5c5c5-0000-4000-8000-000000000025") == "uuid c5c5c5c5-0000-4000-8000-000000000025"
 
 
 @pytest.mark.parametrize(
@@ -118,10 +122,35 @@ def test_ipv6_is_an_address_not_a_secret():
         ("/x?monkey=1&keyboard=2&passphrase_hint=3", "/x?monkey=1&keyboard=2&passphrase_hint=3"),
         ("key=value outside a URL", "key=value outside a URL"),
         ("/x?token=&next=1", "/x?token=&next=1"),  # nothing to hide
+        ("http://127.0.0.1:8000?email=user@example.com", "http://127.0.0.1:8000?email=user@example.com"),
+        ("http://127.0.0.1:8000#frag@section", "http://127.0.0.1:8000#frag@section"),
     ],
 )
 def test_url_query_secrets(line, expected):
     assert redact_secrets(line) == expected
+
+
+def test_json_secret_redaction():
+    json_text = (
+        '{"access_token": "secret-token", "refresh_token": "refresh-123", "client_secret": "cs-456", '
+        '"client-key": "ck-789", "api_key": "ak-1", "apikey": "ak-2", "password": "pw", "secret": "s", "n": 1}'
+    )
+    assert redact_secrets(json_text) == (
+        '{"access_token": "***", "refresh_token": "***", "client_secret": "***", '
+        '"client-key": "***", "api_key": "***", "apikey": "***", "password": "***", "secret": "***", "n": 1}'
+    )
+    py_dict = "{'password': 'my-password', 'apikey': 'key-abc'}"
+    assert redact_secrets(py_dict) == "{'password': '***', 'apikey': '***'}"
+
+
+def test_identifier_patterns(custom_patterns):
+    register_identifier_pattern(r"device-[0-9a-f]{4}")
+    line = "connected to device-abcd at 192.168.1.10"
+    assert redact(line) == "connected to [redacted] at x.x.x.10"
+    # Identifier patterns are skipped when address redaction is disabled
+    assert redact_secrets(line) == "connected to device-abcd at 192.168.1.10"
+    clear_identifier_patterns()
+    assert redact(line) == "connected to device-abcd at x.x.x.10"
 
 
 def test_custom_patterns(custom_patterns):

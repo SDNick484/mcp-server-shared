@@ -4,7 +4,7 @@
 
 `mcp-server-shared`: the single source of truth for the code the sibling MCP servers
 (`mcp-server-batocera`, `-harmony`, `-onkyo`, `-pixelcade`, `-shieldtv`, `-sofabaton`,
-`-webos`) each carry a copy of.
+`-steam-backlog`, `-webos`) each carry a copy of.
 
 See `README.md` for the full layout, motivation, and the sync workflow.
 

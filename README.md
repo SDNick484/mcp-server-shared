@@ -21,6 +21,7 @@ The sibling repos are:
 - `mcp-server-pixelcade`
 - `mcp-server-shieldtv`
 - `mcp-server-sofabaton`
+- `mcp-server-steam-backlog`
 - `mcp-server-webos`
 
 ## Why not a PyPI package?

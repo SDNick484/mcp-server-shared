@@ -8,7 +8,7 @@ log addresses freely, and tracebacks carry URLs and headers. So instead of
 editing messages one by one, the stderr handler's *formatter* redacts the
 final text, tracebacks included:
 
-    192.168.1.60                     -> x.x.x.60      (last octet kept, to tell devices apart)
+    192.0.2.60                     -> x.x.x.60      (last octet kept, to tell devices apart)
     2001:db8::1, fe80::1ff:fe00:1    -> x:x::1        (IPv6: last group kept, likewise)
     AA:BB:CC:DD:EE:FF                -> xx:xx:xx:xx:EE:FF
     AABBCCDDEEFF, 0009b0f76cfd       -> xxxxxxxxEEFF, xxxxxxxx6cfd  (bare hex, as in MQTT topics)
@@ -46,7 +46,7 @@ _IPV4 = re.compile(r"(?<![\d.])(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})(?!\d|\
 # eight-group forms both qualify), then ipaddress decides. That keeps the regex
 # readable and rejects look-alikes such as MACs (six groups, no "::") and
 # times ("10:23:45"). The lookarounds stop it starting or ending inside a
-# longer token, e.g. the IPv4 tail of "::ffff:192.168.1.5", which _IPV4 handles.
+# longer token, e.g. the IPv4 tail of "::ffff:192.0.2.5", which _IPV4 handles.
 # It may also start right after a label's colon ("ipv6:fe80::1"). That can only
 # matter where no match starts further left, and ipaddress still has to accept
 # what's left, so at worst it redacts the valid tail of a longer colon run.

@@ -96,7 +96,7 @@ def test_unsafe_or_incomplete_settings_are_refused(argv, env, message):
 
 def test_insecure_flag_is_an_explicit_opt_out():
     parse(["--bind", "0.0.0.0", "--insecure-no-auth"]).check()
-    parse(["--bind", "0.0.0.0", "--public-host", "192.168.1.10", "--insecure-no-auth"]).check()
+    parse(["--bind", "0.0.0.0", "--public-host", "192.0.2.10", "--insecure-no-auth"]).check()
 
 
 def test_a_public_host_is_fine_with_access():
@@ -318,8 +318,8 @@ async def test_wildcard_bind_keeps_host_checks_on(caplog):
     assert sec.enable_dns_rebinding_protection is True
     assert "127.0.0.1:*" in sec.allowed_hosts and not any("evil" in h for h in sec.allowed_hosts)
     assert "Binding to 0.0.0.0 with no --public-host" in caplog.text
-    lan = remote.transport_security(remote.HttpConfig(bind="0.0.0.0", public_hosts=("192.168.1.10",)))
-    assert "192.168.1.10:*" in lan.allowed_hosts and "http://192.168.1.10:*" in lan.allowed_origins
+    lan = remote.transport_security(remote.HttpConfig(bind="0.0.0.0", public_hosts=("192.0.2.10",)))
+    assert "192.0.2.10:*" in lan.allowed_hosts and "http://192.0.2.10:*" in lan.allowed_origins
 
 
 def test_ipv6_bind_and_public_hosts_in_transport_security(caplog):
@@ -368,7 +368,7 @@ async def test_without_access_forwarded_requests_get_403(header):
 @pytest.mark.anyio
 async def test_insecure_no_auth_serves_forwarded_requests_too():
     cfg = remote.HttpConfig(path="/thing/mcp", insecure_no_auth=True)
-    async with running(cfg, []) as base, mcp_client(f"{base}/thing/mcp", {"x-forwarded-for": "192.168.1.20"}) as c:
+    async with running(cfg, []) as base, mcp_client(f"{base}/thing/mcp", {"x-forwarded-for": "192.0.2.20"}) as c:
         assert (await c.call_tool("ping", {})).content[0].text == "pong"
 
 

@@ -39,7 +39,7 @@ def custom_patterns(monkeypatch):
 
 
 def test_addresses_and_macs():
-    assert redact("eISCP -> 192.168.1.147 PWR01") == "eISCP -> x.x.x.147 PWR01"
+    assert redact("eISCP -> 192.0.2.147 PWR01") == "eISCP -> x.x.x.147 PWR01"
     assert redact("mac 00:09:B0:F7:6C:FD / 0009B0F76CFD") == "mac xx:xx:xx:xx:6C:FD / xxxxxxxx6CFD"
     assert redact("simulator at 127.0.0.1:60128") == "simulator at 127.0.0.1:60128"  # loopback kept
     assert redact("bound to 0.0.0.0:8000") == "bound to 0.0.0.0:8000"  # unspecified kept
@@ -65,7 +65,7 @@ def test_lowercase_bare_macs():
         ("prefix 2001:db8::", "prefix x:x::0"),
         ("connected to 2001:db8::1.", "connected to x:x::1."),  # end of a sentence
         ("ipv6:fe80::1 up", "ipv6:x:x::1 up"),  # after a label's colon
-        ("mapped ::ffff:192.168.1.5", "mapped ::ffff:x.x.x.5"),  # the IPv4 rule takes the tail
+        ("mapped ::ffff:192.0.2.5", "mapped ::ffff:x.x.x.5"),  # the IPv4 rule takes the tail
     ],
 )
 def test_ipv6_addresses(line, expected):
@@ -101,7 +101,7 @@ def test_ipv6_and_macs_dont_clobber_each_other():
 
 
 def test_ipv4_at_the_end_of_a_sentence():
-    assert redact("connected to 192.168.1.5.") == "connected to x.x.x.5."
+    assert redact("connected to 192.0.2.5.") == "connected to x.x.x.5."
     assert redact("version 1.2.3.4.5") == "version 1.2.3.4.5"  # five groups: not an address
 
 
@@ -148,10 +148,10 @@ def test_json_secret_redaction():
 
 def test_identifier_patterns(custom_patterns):
     register_identifier_pattern(r"device-[0-9a-f]{4}")
-    line = "connected to device-abcd at 192.168.1.10"
+    line = "connected to device-abcd at 192.0.2.10"
     assert redact(line) == "connected to [redacted] at x.x.x.10"
     # Identifier patterns are skipped when address redaction is disabled
-    assert redact_secrets(line) == "connected to device-abcd at 192.168.1.10"
+    assert redact_secrets(line) == "connected to device-abcd at 192.0.2.10"
     clear_identifier_patterns()
     assert redact(line) == "connected to device-abcd at x.x.x.10"
 
@@ -159,12 +159,12 @@ def test_identifier_patterns(custom_patterns):
 def test_custom_patterns(custom_patterns):
     register_custom_pattern(re.compile(r'("client-key":\s*")[^"]+'), r"\1***")
     register_custom_pattern(r"\bPIN (\d+)", lambda m: "PIN " + "#" * len(m.group(1)))  # a string compiles
-    line = 'register {"client-key": "a1b2c3d4"} PIN 1234 at 192.168.1.20'
-    assert redact_secrets(line) == 'register {"client-key": "***"} PIN #### at 192.168.1.20'
+    line = 'register {"client-key": "a1b2c3d4"} PIN 1234 at 192.0.2.20'
+    assert redact_secrets(line) == 'register {"client-key": "***"} PIN #### at 192.0.2.20'
     # Custom rules are secrets: the formatter applies them with addresses shown or hidden.
     record = logging.LogRecord("x", logging.INFO, __file__, 1, "%s", (line,), None)
     assert RedactingFormatter("%(message)s", addresses=False).format(record) == (
-        'register {"client-key": "***"} PIN #### at 192.168.1.20'
+        'register {"client-key": "***"} PIN #### at 192.0.2.20'
     )
     assert RedactingFormatter("%(message)s").format(record) == 'register {"client-key": "***"} PIN #### at x.x.x.20'
 
@@ -215,7 +215,7 @@ def test_setup_logging_redacts_to_stderr(root_logger, capsys):
     setup_logging(logging.INFO)
     assert len(root_logger.handlers) == 1 and root_logger.level == logging.INFO
     assert isinstance(root_logger.handlers[0].formatter, RedactingFormatter)
-    logging.getLogger("dev").info("reached %s with %s", "192.168.1.147", f"Bearer {JWT}")
+    logging.getLogger("dev").info("reached %s with %s", "192.0.2.147", f"Bearer {JWT}")
     logging.getLogger("dev").debug("below the level")
     out, err = capsys.readouterr()
     assert out == ""  # stdout belongs to the MCP stdio transport
@@ -224,8 +224,8 @@ def test_setup_logging_redacts_to_stderr(root_logger, capsys):
 
 def test_setup_logging_unredacted_still_hides_secrets(root_logger, capsys):
     setup_logging(logging.DEBUG, redacted=False, fmt="%(message)s")
-    logging.getLogger("dev").debug("reached %s?token=%s", "192.168.1.147", "abc")
-    assert capsys.readouterr().err == "reached 192.168.1.147?token=***\n"
+    logging.getLogger("dev").debug("reached %s?token=%s", "192.0.2.147", "abc")
+    assert capsys.readouterr().err == "reached 192.0.2.147?token=***\n"
 
 
 def test_setup_logging_replaces_handlers_rather_than_stacking(root_logger, capsys):
@@ -238,7 +238,7 @@ def test_setup_logging_replaces_handlers_rather_than_stacking(root_logger, capsy
 
 def test_formatter_datefmt():
     fmt = RedactingFormatter("%(asctime)s %(message)s", datefmt="%Y")
-    record = logging.LogRecord("x", logging.INFO, __file__, 1, "at %s", ("192.168.1.2",), None)
+    record = logging.LogRecord("x", logging.INFO, __file__, 1, "at %s", ("192.0.2.2",), None)
     out = fmt.format(record)
     assert out.endswith(" at x.x.x.2") and len(out.split()[0]) == 4
 
@@ -253,25 +253,25 @@ def test_secrets_are_always_redacted():
 
 
 def test_formatter_without_address_redaction_still_hides_secrets():
-    record = logging.LogRecord("x", logging.WARNING, __file__, 1, "Denied %s from %s", (JWT, "192.168.1.9"), None)
-    assert RedactingFormatter("%(message)s", addresses=False).format(record) == "Denied [jwt redacted] from 192.168.1.9"
+    record = logging.LogRecord("x", logging.WARNING, __file__, 1, "Denied %s from %s", (JWT, "192.0.2.9"), None)
+    assert RedactingFormatter("%(message)s", addresses=False).format(record) == "Denied [jwt redacted] from 192.0.2.9"
     assert RedactingFormatter("%(message)s").format(record) == "Denied [jwt redacted] from x.x.x.9"
 
 
 def test_tracebacks_are_redacted_too():
     try:
-        raise ConnectionError(f"connect to 192.168.1.147 failed, token {JWT}")
+        raise ConnectionError(f"connect to 192.0.2.147 failed, token {JWT}")
     except ConnectionError:
         import sys
 
         record = logging.LogRecord("x", logging.ERROR, __file__, 1, "boom", (), sys.exc_info())
     out = RedactingFormatter("%(message)s").format(record)
-    assert "192.168.1.147" not in out and JWT not in out and "x.x.x.147" in out
+    assert "192.0.2.147" not in out and JWT not in out and "x.x.x.147" in out
 
 
 def test_mask_ip():
     # IPv4 LAN addresses
-    assert mask_ip("192.168.1.60") == "x.x.x.60"
+    assert mask_ip("192.0.2.60") == "x.x.x.60"
     assert mask_ip("192.0.2.20") == "x.x.x.20"
     assert mask_ip("10.0.0.1") == "x.x.x.1"
     assert mask_ip("172.16.0.5") == "x.x.x.5"
@@ -298,24 +298,24 @@ def test_mask_ip():
 
 
 def test_mask_host_port():
-    assert mask_host_port("192.168.1.100:1883") == "x.x.x.100:1883"
+    assert mask_host_port("192.0.2.100:1883") == "x.x.x.100:1883"
     assert mask_host_port("192.0.2.20:5222") == "x.x.x.20:5222"
     assert mask_host_port("127.0.0.1:8000") == "127.0.0.1:8000"
     assert mask_host_port("localhost:1883") == "localhost:1883"
     assert mask_host_port("[2001:db8::1]:1883") == "[x:x::1]:1883"
     assert mask_host_port("[::1]:8000") == "[::1]:8000"
-    assert mask_host_port("192.168.1.100") == "x.x.x.100"
+    assert mask_host_port("192.0.2.100") == "x.x.x.100"
     assert mask_host_port("") == ""
 
 
 def test_mask_url():
-    assert mask_url("http://192.168.1.50:8480/") == "http://x.x.x.50:8480/"
-    url_with_query = "http://192.168.1.50:8480/api/v1?device=tv#section"
+    assert mask_url("http://192.0.2.50:8480/") == "http://x.x.x.50:8480/"
+    url_with_query = "http://192.0.2.50:8480/api/v1?device=tv#section"
     assert mask_url(url_with_query) == "http://x.x.x.50:8480/api/v1?device=tv#section"
-    assert mask_url("http://user:pass@192.168.1.50:8480/") == "http://user:pass@x.x.x.50:8480/"
+    assert mask_url("http://user:pass@192.0.2.50:8480/") == "http://user:pass@x.x.x.50:8480/"
     assert mask_url("http://[2001:db8::1]:8480/") == "http://[x:x::1]:8480/"
     assert mask_url("http://localhost:8480/") == "http://localhost:8480/"
     assert mask_url("http://127.0.0.1:8000/healthz") == "http://127.0.0.1:8000/healthz"
-    assert mask_url("mqtt://192.168.1.200:1883") == "mqtt://x.x.x.200:1883"
+    assert mask_url("mqtt://192.0.2.200:1883") == "mqtt://x.x.x.200:1883"
     assert mask_url("") == ""
     assert mask_url("not-a-url") == "not-a-url"

@@ -17,6 +17,7 @@ The single source of truth for code the sibling MCP servers each carry a copy of
 The sibling repos are:
 - `mcp-server-batocera`
 - `mcp-server-harmony`
+- `mcp-server-misterfpga`
 - `mcp-server-onkyo`
 - `mcp-server-pixelcade`
 - `mcp-server-shieldtv`
@@ -34,44 +35,51 @@ to fix bugs.
 
 ## How sync works
 
-Every sibling repo has a `shared.toml` and a `shared.lock`.
+The manifest lives **here**: `shared.toml` lists every shared file, which module it belongs
+to, and where it lands in a sibling (`src/__PKG__/remote.py`, `tests/test_remote.py`, ...).
+Each sibling carries one small file, `shared.lock`, plus the copies themselves:
 
-- `shared.toml` declares **what** that sibling consumes: which shared modules, and where the
-  package lives:
-  ```toml
-  format = 2
-
-  [source]
-  repo = "SDNick484/mcp-server-shared"
-  package = "batocera_mcp"
-  modules = ["remote", "logsafe", "tasks", "ratelimit", "registry"]
-  ```
-- `shared.lock` records **which commit** of `mcp-server-shared` the sibling last synced to:
-  ```toml
-  format = 2
-  commit = "c3ab4de..."
-  ```
+```toml
+# shared.lock, in a sibling
+repo = "SDNick484/mcp-server-shared"
+commit = "73e65ec9e63c8c3a1b3831697da56c5b86854a5c"   # a commit on this repo's main
+package = "webos_mcp"                                   # what replaces __PKG__
+exclude = ["registry"]                                  # optional: modules this sibling doesn't take
+```
 
 Running the sync script in a sibling:
 
 ```sh
-# Check if the sibling's copies match what its lock pins:
+# Write the copies as of the locked commit (fixes a copy someone edited by hand):
 python scripts/sync_shared.py
 
-# Check if mcp-server-shared main has moved ahead of the lock:
-python scripts/sync_shared.py --check-latest
+# Don't write; exit 1 if any copy differs from the locked commit (what CI runs on every PR):
+python scripts/sync_shared.py --check
 
-# Bring in whatever main has, update the files, and advance the lock:
+# Don't write; exit 1 if any copy differs from mcp-server-shared main (CI, weekly):
+python scripts/sync_shared.py --check --latest
+
+# Move the lock to main and write whatever changed:
 python scripts/sync_shared.py --update
 
-# Test against a local checkout of mcp-server-shared instead of GitHub:
+# Show what either of the above would change, without writing:
+python scripts/sync_shared.py --update --dry-run
+
+# Try a local checkout of mcp-server-shared (a branch you're working on) in this sibling:
 python scripts/sync_shared.py --source ../mcp-server-shared
-python scripts/sync_shared.py --source ../mcp-server-shared --update
 ```
 
-The script exits `0` if everything matches, `1` if anything differs (and prints the diff),
-or `2` on usage/network error. CI in each sibling runs `python scripts/sync_shared.py` on
-every push to ensure nobody edits a shared file in a sibling repo by accident.
+Exit status: `0` everything matches or was written, `1` a copy differs (`--check`; the diff
+is printed), `2` anything else (bad arguments, an unreadable lock, the network).
+
+**The locked commit must be one `main` has pointed at.** `--update` guarantees that; a lock
+written any other way (by hand, or from a branch checkout) can pin a PR branch's head, which
+the squash merge replaces and the branch deletion orphans. GitHub keeps serving such a commit
+for a while, so everything looks fine until it doesn't. The script warns when a lock isn't on
+`main`'s history; the fix is `--update`.
+
+`scripts/sync_shared.py` is itself a shared file, so `--update` brings in the newest script;
+`scripts/sync_all_siblings.py` (this repo only) runs it across every `../mcp-server-*` checkout.
 
 ### Automated sync across all siblings
 

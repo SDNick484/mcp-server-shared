@@ -10,6 +10,7 @@ throwaway RSA key, so nothing here needs Cloudflare.
 from __future__ import annotations
 
 import argparse
+import contextlib
 import socket
 import time
 from contextlib import asynccontextmanager
@@ -203,6 +204,63 @@ async def running(
             await anyio.sleep(0.01)
         yield f"http://127.0.0.1:{port}"
         server.should_exit = True
+
+
+@pytest.mark.anyio
+async def test_shutdown_with_a_stuck_tool_call_still_runs_the_lifespan_shutdown():
+    """What supervise-daemon's SIGTERM/5 must not hit: a tool call blocked on an unresponsive device
+    keeps a response open, and uvicorn by default waits for it forever, so the lifespan shutdown
+    (device disconnects) never runs before the SIGKILL. With serve_http's settings the response is
+    closed within SHUTDOWN_TIMEOUT and the lifespan shutdown runs, inside the supervisor's budget."""
+    import uvicorn
+
+    events: list[str] = []
+
+    @asynccontextmanager
+    async def lifespan(_s: MCPServer):
+        events.append("start")
+        yield
+        events.append("stop")
+
+    mcp = MCPServer("thing", lifespan=lifespan)
+
+    @mcp.tool()
+    async def stuck() -> str:
+        """Never answers, like a TV that stopped replying mid-command."""
+        await anyio.sleep(60)
+        return "never"
+
+    cfg = remote.HttpConfig(path="/thing/mcp")
+    settings = remote.uvicorn_settings(cfg)
+    assert settings["timeout_graceful_shutdown"] == remote.SHUTDOWN_TIMEOUT and settings["proxy_headers"] is False
+    sock = socket.socket()
+    sock.bind(("127.0.0.1", 0))
+    port = sock.getsockname()[1]
+    # Everything serve_http passes except the address (the pre-bound socket stands in) and the log level
+    config = uvicorn.Config(
+        remote.build_app(mcp, cfg), **{k: v for k, v in settings.items() if k not in ("host", "port", "log_level")}
+    )
+    server = uvicorn.Server(config)
+    async with anyio.create_task_group() as tg:
+        tg.start_soon(server.serve, [sock])
+        while not server.started:
+            await anyio.sleep(0.01)
+
+        async def call_stuck_tool() -> None:
+            with anyio.move_on_after(remote.SHUTDOWN_TIMEOUT + 3):  # the call is expected to be cut off
+                async with mcp_client(f"http://127.0.0.1:{port}/thing/mcp", {}) as c:
+                    with contextlib.suppress(Exception):  # the server closes the connection under it
+                        await c.call_tool("stuck", {})
+
+        tg.start_soon(call_stuck_tool)
+        await anyio.sleep(0.3)  # the call is in flight
+        started = time.monotonic()
+        server.should_exit = True  # what the SIGTERM handler sets
+        with anyio.fail_after(remote.SHUTDOWN_TIMEOUT + 3):
+            while "stop" not in events:
+                await anyio.sleep(0.02)
+        assert time.monotonic() - started < remote.SHUTDOWN_TIMEOUT + 2  # inside supervise-daemon's 5 s
+    assert events == ["start", "stop"]
 
 
 def mcp_client(url: str, headers: dict[str, str]) -> Client:

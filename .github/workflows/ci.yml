@@ -5,16 +5,32 @@ on:
     branches: [main]
   pull_request:
 
+# The token gets nothing it doesn't need: this workflow only reads the checkout. A job that
+# needs more (none today) asks for it in its own `permissions:`.
+permissions:
+  contents: read
+
+# One run per branch: a push to a PR branch cancels the run for the previous push.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   test:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:
+        # 3.11 is the floor (tomllib in the sync script); 3.12 is what Alpine 3.20-3.22 ship in the
+        # LXCs; 3.13 is Alpine edge and the desktop; 3.14 is ahead of the fleet, so a break there is
+        # a heads-up rather than an outage.
         python-version: ["3.11", "3.12", "3.13", "3.14"]
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-python@v7
+      # Actions pinned to a commit, not a tag: a tag can be moved. The comment is the version the
+      # SHA was taken from; Dependabot (.github/dependabot.yml) bumps both together.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: ${{ matrix.python-version }}
       - run: pip install -e ".[dev]"

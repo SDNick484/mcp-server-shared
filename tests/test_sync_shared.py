@@ -74,13 +74,23 @@ def github(monkeypatch):
     """Two commits (OLD, NEW = main) served through the script's one network function."""
     sync = load_script()
     commits = {OLD: snapshot("1"), NEW: snapshot("2")}
-    state = {"main": NEW, "requests": 0}
+    # main's history is OLD -> NEW. `compare` answers how a commit relates to main, like GitHub's
+    # endpoint; "history" is the SHAs on main, "on_main_check" counts those calls.
+    state = {"main": NEW, "requests": 0, "history": [OLD, NEW], "on_main_check": 0}
 
     def fake_get(url: str, accept: str | None = None) -> bytes:
         state["requests"] += 1
         if url.endswith("/commits/main"):
             assert accept == "application/vnd.github.sha"
             return str(state["main"]).encode()
+        if "/compare/main..." in url:
+            state["on_main_check"] += 1
+            sha = url.rsplit("...", 1)[1]
+            if sha not in commits:
+                raise sync.SyncError(f"GET {url}: HTTP 404 Not Found")
+            history = list(state["history"])
+            status = "identical" if sha == state["main"] else "behind" if sha in history else "ahead"
+            return f'{{"status": "{status}"}}'.encode()
         prefix = "https://raw.githubusercontent.com/SDNick484/mcp-server-shared/"
         assert url.startswith(prefix), url
         commit, _, path = url.removeprefix(prefix).partition("/")
@@ -220,6 +230,8 @@ def test_manifest_paths_must_stay_inside_the_repo(github, sibling, bad):
         ('commit = "abc"\npackage = "demo_mcp"\n', "full 40-character SHA"),
         (f'commit = "{OLD}"\npackage = "demo-mcp"\n', "Python identifier"),
         (f'commit = "{OLD}"\n', "missing 'package'"),
+        (f'repo = "../x"\ncommit = "{OLD}"\npackage = "demo_mcp"\n', "owner/name"),
+        (f'repo = "owner/.."\ncommit = "{OLD}"\npackage = "demo_mcp"\n', "owner/name"),
     ],
 )
 def test_a_bad_lock_is_explained(github, sibling, capsys, lock, message):
@@ -573,6 +585,109 @@ def test_gha_annotation_escaping(monkeypatch, capsys, tmp_path):
     sync._print_report(tmp_path, files, found, "test", "fix")
     out = capsys.readouterr().out
     assert "::error file=target%25name%0D%0A.py::target%25name%0D%0A.py differs from test. Fix: fix" in out
+
+
+# --- the lock should point at a commit on main -------------------------------------------------
+def test_a_lock_on_mains_history_passes_quietly(github, sibling, capsys):
+    sync, _, state = github
+    assert run(sync, sibling) == 0  # OLD: an ancestor of main
+    assert run(sync, sibling, "--check") == 0
+    assert "warning" not in capsys.readouterr().err
+    assert state["on_main_check"] == 2  # once per run; --check --latest and --update don't ask
+
+
+def test_a_lock_on_a_squash_merged_branch_head_is_warned_about_but_still_syncs(github, sibling, capsys):
+    """The case that happened: three siblings pinned a PR branch's head, which the squash merge replaced and
+    the branch deletion orphaned. raw.githubusercontent.com still served it, so nothing noticed."""
+    sync, commits, state = github
+    branch_head = "c" * 40
+    commits[branch_head] = snapshot("2")  # same bytes as main, so --check passes on content
+    state["history"] = [OLD, NEW]  # ...but main never pointed at it
+    (sibling / "shared.lock").write_text(
+        f'repo = "SDNick484/mcp-server-shared"\ncommit = "{branch_head}"\npackage = "demo_mcp"\n'
+    )
+    assert run(sync, sibling) == 0  # the sync itself still works: the files exist
+    err = capsys.readouterr().err
+    assert f"warning: the locked commit {branch_head[:7]} is not on SDNick484/mcp-server-shared main (ahead)" in err
+    assert "--update" in err
+    assert run(sync, sibling, "--check") == 0  # advisory: the content matches, so --check still passes
+    assert "not on SDNick484/mcp-server-shared main" in capsys.readouterr().err
+
+
+def test_a_lock_github_no_longer_has_is_explained(github, sibling, capsys):
+    sync, _, _ = github
+    gone = "d" * 40
+    (sibling / "shared.lock").write_text(
+        f'repo = "SDNick484/mcp-server-shared"\ncommit = "{gone}"\npackage = "demo_mcp"\n'
+    )
+    assert run(sync, sibling) == 2  # the files can't be fetched at all
+    # The fetch failure is the error; the ancestry warning isn't reached (nothing to add to a 404)
+    assert "HTTP 404" in capsys.readouterr().err
+
+
+def test_the_on_main_check_is_advisory_when_the_api_is_unavailable(github, sibling, capsys, monkeypatch):
+    sync, _, _ = github
+    real_get = sync._get
+
+    def rate_limited(url: str, accept: str | None = None) -> bytes:
+        if "/compare/" in url:
+            raise sync.SyncError(f"GET {url}: HTTP 403 rate limit exceeded (rate limited? set GITHUB_TOKEN)")
+        return real_get(url, accept)
+
+    monkeypatch.setattr(sync, "_get", rate_limited)
+    assert run(sync, sibling, "--check") == 1  # nothing synced yet: that's the real answer
+    assert run(sync, sibling) == 0
+    err = capsys.readouterr().err
+    assert "couldn't check whether the locked commit is on main" in err and "rate limit" in err
+
+
+def test_lock_is_on_main_handles_odd_answers(github, monkeypatch):
+    sync, _, _ = github
+    monkeypatch.setattr(sync, "_get", lambda url, accept=None: b"<html>")
+    assert "isn't JSON" in sync.lock_is_on_main("o/r", OLD)
+    monkeypatch.setattr(sync, "_get", lambda url, accept=None: b'{"status": "weird"}')
+    assert "unexpected compare status 'weird'" in sync.lock_is_on_main("o/r", OLD)
+    monkeypatch.setattr(sync, "_get", lambda url, accept=None: b'{"status": "diverged"}')
+    assert "(diverged)" in sync.lock_is_on_main("o/r", OLD)
+
+
+# --- unknown lock keys ---------------------------------------------------------------------------
+def test_unknown_lock_keys_are_warned_about(github, sibling, capsys):
+    """`excludes = [...]` (a typo) excluded nothing, silently; now it says so."""
+    sync, _, _ = github
+    (sibling / "shared.lock").write_text(
+        f'repo = "SDNick484/mcp-server-shared"\ncommit = "{OLD}"\npackage = "demo_mcp"\nexcludes = ["extra"]\n'
+    )
+    assert run(sync, sibling) == 0
+    err = capsys.readouterr().err
+    assert "shared.lock has keys this script doesn't use: excludes" in err
+    assert "it reads repo, commit, package, exclude" in err
+    assert (sibling / "src/demo_mcp/extra.py").exists()  # the typo didn't exclude anything, as warned
+
+
+# --- atomic writes -----------------------------------------------------------------------------
+def test_writes_are_atomic_and_leave_no_temp_file(github, sibling):
+    sync, _, _ = github
+    assert run(sync, sibling) == 0
+    assert not [p for p in sibling.rglob(".*.tmp-*")], "temporary files left behind"
+    assert run(sync, sibling, "--update") == 0  # the lock is written the same way
+    assert not [p for p in sibling.rglob(".*.tmp-*")]
+
+
+def test_a_failed_write_leaves_the_old_file_and_cleans_up(github, sibling, monkeypatch):
+    sync, _, _ = github
+    assert run(sync, sibling) == 0
+    target = sibling / "src/demo_mcp/thing.py"
+    before = target.read_bytes()
+
+    def boom(src, dst):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(sync.os, "replace", boom)
+    with pytest.raises(OSError, match="disk full"):
+        sync.write_atomic(target, b"new content")
+    assert target.read_bytes() == before  # the old file is intact...
+    assert not [p for p in sibling.rglob(".*.tmp-*")]  # ...and the temp file was removed
 
 
 # --- uncommitted local changes to a copy are not silently overwritten --------------------------

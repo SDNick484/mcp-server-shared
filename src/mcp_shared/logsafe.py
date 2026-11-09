@@ -127,7 +127,12 @@ def mask_ip(address: str) -> str:
         return address
     if isinstance(ip, ipaddress.IPv4Address):
         return f"x.x.x.{address.split('.')[-1]}"
+    # The text after the last ":" is the last hextet for "2001:db8::1", but for the dotted forms
+    # ("::ffff:192.0.2.5", "64:ff9b::192.0.2.5") it's a whole IPv4 address, which would leak the
+    # first three octets. Mask that embedded address the IPv4 way instead.
     tail = address.rsplit(":", 1)[1] if ":" in address else ""
+    if "." in tail:
+        return f"x:x::x.x.x.{tail.split('.')[-1]}"
     return f"x:x::{tail or '0'}"
 
 
@@ -169,7 +174,11 @@ def mask_url(url: str) -> str:
         userinfo = ""
         if "@" in netloc:
             userinfo = netloc.split("@", 1)[0] + "@"
-        port_part = f":{parsed.port}" if parsed.port is not None else ""
+        # parsed.port raises ValueError for a port that isn't a number or is out of range. This
+        # runs inside log formatting, where raising would lose the whole line, so keep whatever
+        # text follows the host instead (only the host is masked anyway).
+        host_and_port = netloc.rsplit("@", 1)[-1]
+        port_part = host_and_port[len(hostname) :] if host_and_port.lower().startswith(hostname) else ""
         host_repr = f"[{masked}]" if ":" in masked else masked
         netloc = f"{userinfo}{host_repr}{port_part}"
     return urllib.parse.urlunsplit((parsed.scheme, netloc, parsed.path, parsed.query, parsed.fragment))

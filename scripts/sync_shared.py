@@ -14,6 +14,7 @@ speaks stdio has no use for remote.py):
     python scripts/sync_shared.py --check           exit 1 if any copy differs from the locked commit
     python scripts/sync_shared.py --check --latest  exit 1 if any copy differs from main instead
     ... --source DIR [--package NAME]               read a local mcp-server-shared checkout, not GitHub
+    ... --force                                     overwrite copies with uncommitted local changes
 
 `--source` is for trying a change to mcp-server-shared in a sibling before
 pushing it, and for mcp-server-shared itself, whose CI renders the shared
@@ -37,6 +38,11 @@ Why it works the way it does:
   that up). Raw files are fetched anonymously because raw.githubusercontent.com
   answers 404 to a token that can't see the repo, even a public one, and a
   workflow's own token is scoped to its own repo, not to mcp-server-shared.
+- A copy with uncommitted changes isn't overwritten unless --force is given. Hand-editing
+  a copy is against the rules, but it happens while debugging, and a sync that silently
+  threw the edit away left nothing to recover it from (`git diff` then shows upstream's
+  change, not yours). The check uses `git status --porcelain` and is skipped when the
+  repo isn't a git checkout or git isn't installed, so the script still runs anywhere.
 - Siblings opt out of a module (`exclude = ["remote"]`) rather than opt in, so
   a newly shared module reaches every sibling by default, and a sibling that
   doesn't want it says so on purpose. Exclusion is by module, not by path, so
@@ -342,18 +348,61 @@ def differences(root: Path, files: dict[str, bytes]) -> list[tuple[str, str]]:
     return found
 
 
-def write_files(root: Path, files: dict[str, bytes], *, dry_run: bool = False) -> list[str]:
-    """Write the copies that differ; return their paths. Unchanged files are left alone (and their mtimes)."""
+def locally_modified(root: Path, targets: list[str]) -> list[str]:
+    """Which of `targets` have uncommitted changes in the git checkout at `root` (tracked and modified,
+    or staged). [] when `root` isn't in a git work tree or git isn't available: then there's nothing to
+    compare against, and the sync proceeds as it always has."""
+    if not targets or not shutil.which("git"):
+        return []
+    try:
+        out = subprocess.run(
+            ["git", "-C", str(root), "status", "--porcelain", "--untracked-files=no", "--", *targets],
+            capture_output=True,
+            text=True,
+            timeout=10,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return []
+    if out.returncode != 0:  # not a git repo, or git is unhappy: don't guess
+        return []
+    modified = []
+    for line in out.stdout.splitlines():
+        # Porcelain v1: two status columns, a space, then the path (quoted if it has odd characters;
+        # ours never do). A rename shows "old -> new"; we only match on the new name.
+        path = line[3:].split(" -> ")[-1].strip().strip('"')
+        if path in targets:
+            modified.append(path)
+    return [t for t in targets if t in modified]  # manifest order
+
+
+def write_files(root: Path, files: dict[str, bytes], *, dry_run: bool = False, force: bool = False) -> list[str]:
+    """Write the copies that differ; return their paths. Unchanged files are left alone (and their mtimes).
+
+    A copy that differs *and* has uncommitted local changes is refused (SyncError naming it) unless
+    `force`: overwriting it would destroy an edit the user has nowhere else. A dry run reports instead.
+    """
     changed = []
     root_resolved = root.resolve()
-    for target, status in differences(root, files):
+    found = differences(root, files)
+    dirty = locally_modified(root, [t for t, status in found if status == "differs"])
+    if dirty and not force and not dry_run:
+        raise SyncError(
+            f"refusing to overwrite {len(dirty)} shared cop{'y' if len(dirty) == 1 else 'ies'} with uncommitted "
+            f"local changes: {', '.join(dirty)}. Shared files are changed in mcp-server-shared, not here: move "
+            "the edit there (or `git stash` / `git checkout --` it), then run this again; `--force` overwrites."
+        )
+    for target, status in found:
         if not dry_run:
             path = (root_resolved / target).resolve()
             if not path.is_relative_to(root_resolved):
                 raise SyncError(f"refusing to write {target}: resolves outside {root}")
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_bytes(files[target])  # bytes, so no newline translation: copies stay byte-identical
-        changed.append(f"{target} ({'added' if status == 'missing' else 'updated'})")
+        note = "added" if status == "missing" else "updated"
+        if target in dirty:
+            note += ", had uncommitted local changes" + ("" if dry_run else "; overwritten (--force)")
+        changed.append(f"{target} ({note})")
     return changed
 
 
@@ -448,6 +497,7 @@ def parse_args(argv: list[str] | None) -> argparse.Namespace:
     parser.add_argument("--update", action="store_true", help="move shared.lock to mcp-server-shared main first")
     parser.add_argument("--check", action="store_true", help="don't write; exit 1 if any copy differs")
     parser.add_argument("--dry-run", action="store_true", help="show what would change without writing files or lock")
+    parser.add_argument("--force", action="store_true", help="overwrite shared copies with uncommitted local changes")
     parser.add_argument("--latest", action="store_true", help="with --check: compare against main, not the lock")
     parser.add_argument("--source", type=Path, help="read files from this local mcp-server-shared checkout")
     parser.add_argument("--package", help="package name for __PKG__ (default: from shared.lock)")
@@ -464,6 +514,8 @@ def parse_args(argv: list[str] | None) -> argparse.Namespace:
         parser.error("--latest only goes with --check (to move to main and write, use --update)")
     if args.update and args.check:
         parser.error("--update writes; use --check --latest to compare against main without writing")
+    if args.force and (args.check or args.dry_run):
+        parser.error("--force only matters when writing; --check and --dry-run never write")
     if args.source and (args.update or args.latest):
         parser.error("--source reads a local checkout, which has no lock or main to move to")
     if args.package is not None and not _PACKAGE.fullmatch(args.package):
@@ -478,6 +530,7 @@ def _excluding(exclude: tuple[str, ...]) -> str:
 def run(args: argparse.Namespace) -> int:
     root: Path = args.root
     dry_run: bool = bool(getattr(args, "dry_run", False))
+    force: bool = bool(getattr(args, "force", False))
 
     if args.source:
         # mcp-server-shared itself renders its tests with --package and has no lock; a sibling
@@ -492,7 +545,7 @@ def run(args: argparse.Namespace) -> int:
             status = report(root, files, label, f"python scripts/sync_shared.py --source {args.source}")
             _report_orphans(root, package, files, exclude)
             return status
-        changed = write_files(root, files, dry_run=dry_run)
+        changed = write_files(root, files, dry_run=dry_run, force=force)
         prefix = f"dry run, would sync from {label}" if dry_run else f"synced from {label}"
         print(f"{prefix}: " + (", ".join(changed) if changed else "nothing to change"))
         _report_orphans(root, package, files, exclude)
@@ -524,7 +577,7 @@ def run(args: argparse.Namespace) -> int:
         main = resolve_main(lock.repo)
         source = GitHub(lock.repo, main, "main")
         files = wanted_files(source, package, writing=not dry_run, root=root, exclude=exclude)
-        changed = write_files(root, files, dry_run=dry_run)
+        changed = write_files(root, files, dry_run=dry_run, force=force)
         new_lock = Lock(lock.repo, main, lock.package, lock.exclude)  # exclude carries over unchanged
         if new_lock != lock and not dry_run:
             (root / LOCK).write_text(new_lock.dump(), encoding="utf-8")  # last: only once every file is in
@@ -536,7 +589,7 @@ def run(args: argparse.Namespace) -> int:
 
     source = GitHub(lock.repo, lock.commit, "locked")
     files = wanted_files(source, package, writing=not dry_run, root=root, exclude=exclude)
-    changed = write_files(root, files, dry_run=dry_run)
+    changed = write_files(root, files, dry_run=dry_run, force=force)
     label = source.label + _excluding(exclude)
     prefix = f"dry run, would sync from {label}" if dry_run else f"synced from {label}"
     print(f"{prefix}: " + (", ".join(changed) if changed else "nothing to change"))

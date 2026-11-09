@@ -7,6 +7,7 @@ tests the siblings get.
 from __future__ import annotations
 
 import importlib.util
+import subprocess
 import sys
 from pathlib import Path
 from types import ModuleType
@@ -572,3 +573,103 @@ def test_gha_annotation_escaping(monkeypatch, capsys, tmp_path):
     sync._print_report(tmp_path, files, found, "test", "fix")
     out = capsys.readouterr().out
     assert "::error file=target%25name%0D%0A.py::target%25name%0D%0A.py differs from test. Fix: fix" in out
+
+
+# --- uncommitted local changes to a copy are not silently overwritten --------------------------
+
+
+def git(root: Path, *args: str) -> str:
+    return subprocess.run(["git", "-C", str(root), *args], check=True, capture_output=True, text=True).stdout
+
+
+@pytest.fixture
+def git_sibling(github, sibling):
+    """A synced sibling that is a git checkout with everything committed."""
+    sync, _, _ = github
+    assert run(sync, sibling) == 0
+    git(sibling, "init", "-q")
+    git(sibling, "-c", "user.name=t", "-c", "user.email=t@example.com", "add", ".")
+    git(sibling, "-c", "user.name=t", "-c", "user.email=t@example.com", "commit", "-q", "-m", "synced")
+    return sibling
+
+
+def test_update_refuses_to_overwrite_an_uncommitted_local_edit(github, git_sibling, capsys):
+    sync, _, _ = github
+    copy = git_sibling / "src/demo_mcp/thing.py"
+    copy.write_text(copy.read_text() + "# debugging\n")  # the edit nobody should make, but people do
+    assert run(sync, git_sibling, "--update") == 2
+    err = capsys.readouterr().err
+    assert "refusing to overwrite 1 shared copy with uncommitted local changes: src/demo_mcp/thing.py" in err
+    assert "--force" in err and "git stash" in err
+    assert copy.read_text().endswith("# debugging\n")  # the edit is still there
+    assert f'commit = "{OLD}"' in (git_sibling / "shared.lock").read_text()  # and the lock didn't move
+
+
+def test_force_overwrites_and_says_so(github, git_sibling, capsys):
+    sync, _, _ = github
+    copy = git_sibling / "src/demo_mcp/thing.py"
+    copy.write_text(copy.read_text() + "# debugging\n")
+    assert run(sync, git_sibling, "--update", "--force") == 0
+    out = capsys.readouterr().out
+    assert "src/demo_mcp/thing.py (updated, had uncommitted local changes; overwritten (--force))" in out
+    assert copy.read_text().endswith('VERSION = "2"\n')
+
+
+def test_dry_run_reports_the_local_edit_instead_of_refusing(github, git_sibling, capsys):
+    sync, _, _ = github
+    copy = git_sibling / "src/demo_mcp/thing.py"
+    copy.write_text(copy.read_text() + "# debugging\n")
+    assert run(sync, git_sibling, "--update", "--dry-run") == 1
+    assert "thing.py (updated, had uncommitted local changes)" in capsys.readouterr().out
+    assert copy.read_text().endswith("# debugging\n")
+
+
+def test_a_committed_local_edit_is_overwritten_as_before(github, git_sibling):
+    """Committed means recoverable from history, and the drift job would have flagged it; the sync's job
+    is to bring the copy back in line."""
+    sync, _, _ = github
+    copy = git_sibling / "src/demo_mcp/thing.py"
+    copy.write_text(copy.read_text() + "# committed edit\n")
+    git(git_sibling, "-c", "user.name=t", "-c", "user.email=t@example.com", "commit", "-qam", "edit")
+    assert run(sync, git_sibling, "--update") == 0
+    assert copy.read_text().endswith('VERSION = "2"\n')
+
+
+def test_a_staged_edit_counts_as_uncommitted(github, git_sibling):
+    sync, _, _ = github
+    copy = git_sibling / "src/demo_mcp/thing.py"
+    copy.write_text(copy.read_text() + "# staged\n")
+    git(git_sibling, "add", "src/demo_mcp/thing.py")
+    assert run(sync, git_sibling, "--update") == 2
+
+
+def test_an_unchanged_or_missing_copy_is_never_dirty(github, git_sibling):
+    """Only copies that both differ from upstream *and* have local changes are refused: a missing file has
+    nothing to lose, and a modified file that happens to match upstream exactly needs no write."""
+    sync, _, _ = github
+    (git_sibling / "src/demo_mcp/extra.py").unlink()  # missing: deleted in the work tree, uncommitted
+    assert run(sync, git_sibling) == 0  # written back, no refusal
+    assert (git_sibling / "src/demo_mcp/extra.py").exists()
+
+
+def test_not_a_git_repo_syncs_as_before(github, sibling):
+    sync, _, _ = github
+    assert run(sync, sibling) == 0
+    copy = sibling / "src/demo_mcp/thing.py"
+    copy.write_text("hand edited\n")  # no git here, so nothing to compare the edit against
+    assert run(sync, sibling, "--update") == 0
+    assert copy.read_text().endswith('VERSION = "2"\n')
+
+
+def test_without_git_installed_syncs_as_before(github, git_sibling, monkeypatch):
+    sync, _, _ = github
+    monkeypatch.setattr(sync.shutil, "which", lambda name: None)
+    (git_sibling / "src/demo_mcp/thing.py").write_text("hand edited\n")
+    assert run(sync, git_sibling, "--update") == 0
+
+
+@pytest.mark.parametrize("args", [("--force", "--check"), ("--force", "--dry-run")])
+def test_force_with_a_non_writing_mode_is_refused(github, sibling, args):
+    sync, _, _ = github
+    with pytest.raises(SystemExit):
+        run(sync, sibling, *args)

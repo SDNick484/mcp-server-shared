@@ -17,6 +17,7 @@ from __PKG__.logsafe import (
     RedactingFormatter,
     clear_custom_patterns,
     clear_identifier_patterns,
+    mask_email,
     mask_host_port,
     mask_ip,
     mask_url,
@@ -144,6 +145,89 @@ def test_json_secret_redaction():
     )
     py_dict = "{'password': 'my-password', 'apikey': 'key-abc'}"
     assert redact_secrets(py_dict) == "{'password': '***', 'apikey': '***'}"
+
+
+@pytest.mark.parametrize(
+    "line, expected",
+    [
+        # OAuth callbacks and token endpoints: the names _QUERY_SECRET used to miss
+        ("GET /cb?access_token=S3CRET&state=x", "GET /cb?access_token=***&state=x"),
+        ("GET /cb?code=S3CRET&id_token=S3CRET&refresh_token=S3CRET", "GET /cb?code=***&id_token=***&refresh_token=***"),
+        ("https://h/x?client_secret=S3CRET&sig=S3CRET&auth=S3CRET", "https://h/x?client_secret=***&sig=***&auth=***"),
+        # Every Authorization scheme, not just Bearer
+        ("Authorization: Basic dXNlcjpwYXNzd29yZA==", "Authorization: Basic [redacted]"),
+        ("authorization: Token S3CRET-abc", "authorization: Token [redacted]"),
+        ("Proxy-Authorization: Digest S3CRET", "Proxy-Authorization: Digest [redacted]"),
+        ("{'authorization': 'Basic S3CRET'}", "{'authorization': 'Basic [redacted]'}"),
+        ("a basic check", "a basic check"),  # the word in prose is not a credential
+        # Cloudflare Access service tokens and session cookie
+        ("CF-Access-Client-Id: 0123abcd.access", "CF-Access-Client-Id: ***"),
+        ("CF-Access-Client-Secret: 0123456789abcdef0123456789abcdef", "CF-Access-Client-Secret: ***"),
+        ("Cookie: CF_Authorization=S3CRET; theme=dark", "Cookie: CF_Authorization=[redacted]; theme=dark"),
+        ("Set-Cookie: CF_Authorization=S3CRET; Path=/", "Set-Cookie: CF_Authorization=[redacted]; Path=/"),
+        # Dict/headers reprs, as httpx and aiohttp exceptions print them
+        (
+            "headers={'cf-access-client-secret': 'S3CRET', 'x-api-key': 'S3CRET', 'token': 'S3CRET', 'host': 'h'}",
+            "headers={'cf-access-client-secret': '***', 'x-api-key': '***', 'token': '***', 'host': 'h'}",
+        ),
+        # Device pairing secrets in JSON blobs (webOS client-key, pairing pins, Wi-Fi PSKs)
+        ('{"pairing_key": "S3CRET", "pin": "1234", "psk": "S3CRET", "code": 200}', '{"pairing_key": "***", "pin": "***", "psk": "***", "code": 200}'),
+        # .env / shell style; names that aren't secrets stay
+        ("MQTT_PASSWORD=S3CRET CF_ACCESS_AUD=abc123 MQTT_HOST=broker", "MQTT_PASSWORD=*** CF_ACCESS_AUD=abc123 MQTT_HOST=broker"),
+        ("HA_TOKEN=S3CRET", "HA_TOKEN=***"),
+        ("MQTT_PASSWORD= (unset)", "MQTT_PASSWORD= (unset)"),
+        # Header-style lines at the start of a line; a sentence mentioning the word is left alone
+        ("x-api-key: S3CRET, next", "x-api-key: ***, next"),
+        ("the token: expired at noon", "the token: expired at noon"),
+    ],
+)
+def test_more_secret_shapes(line, expected):
+    assert redact_secrets(line) == expected
+    assert redact(line) == expected  # the address rules don't disturb these
+
+
+def test_mask_email():
+    assert mask_email("user@example.com") == "u***@example.com"
+    assert mask_email("a@b") == "a***@b"
+    assert mask_email("not-an-email") == "not-an-email"
+    assert mask_email("") == ""
+
+
+# --- property-based: the rules must be idempotent and leave no address behind ------------------
+# hypothesis is optional for the siblings (it isn't in their dev dependencies): without it only
+# these tests are skipped, never the module (a module-level importorskip would skip everything).
+try:
+    import hypothesis
+    import hypothesis.strategies as st
+except ImportError:  # pragma: no cover
+    hypothesis = None  # type: ignore[assignment]
+
+needs_hypothesis = pytest.mark.skipif(hypothesis is None, reason="property tests need hypothesis")
+if hypothesis is not None:
+    _settings = hypothesis.settings(max_examples=300, deadline=None, suppress_health_check=list(hypothesis.HealthCheck))
+
+    @needs_hypothesis
+    @_settings
+    @hypothesis.given(st.text(alphabet=st.sampled_from("0123456789abcdefABCDEF:.-x /?&=@eyJ,;"), max_size=40))
+    def test_redact_is_idempotent(text):
+        """Redacting a redacted line changes nothing: a line can safely pass through two handlers."""
+        once = redact(text)
+        assert redact(once) == once
+
+    @needs_hypothesis
+    @_settings
+    @hypothesis.given(st.text(max_size=8), st.ip_addresses(v=4), st.text(max_size=8))
+    def test_no_ipv4_survives_redact(pre, ip, post):
+        text = str(ip)
+        hypothesis.assume(not text.startswith(("127.", "0.")))
+        assert text not in redact(f"{pre} {text} {post}")
+
+    @needs_hypothesis
+    @_settings
+    @hypothesis.given(st.ip_addresses(v=6), st.text(alphabet="abcxyz ,.;", max_size=8))
+    def test_no_ipv6_survives_redact(ip, around):
+        hypothesis.assume(not (ip.is_loopback or ip.is_unspecified))
+        assert str(ip) not in redact(f"{around} {ip} {around}")
 
 
 def test_identifier_patterns(custom_patterns):

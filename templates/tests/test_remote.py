@@ -162,8 +162,21 @@ async def test_unsigned_tokens_are_denied():
 async def test_email_allow_list():
     policy = remote.AccessPolicy(TEAM, (AUD,), frozenset({"user@example.com"}))
     await remote.AccessVerifier(policy, public_key).verify(token(email="USER@example.com"))
-    with pytest.raises(remote.AccessDenied, match="not in MCP_ALLOWED_EMAILS"):
+    with pytest.raises(remote.AccessDenied, match="not in MCP_ALLOWED_EMAILS") as denied:
         await remote.AccessVerifier(policy, public_key).verify(token(email="guest@example.com"))
+    # The rejected identity is named only enough to tell logins apart: the log line this becomes
+    # may be pasted into an issue.
+    assert "g***@example.com" in str(denied.value) and "guest@example.com" not in str(denied.value)
+    with pytest.raises(remote.AccessDenied, match="this identity is not in MCP_ALLOWED_EMAILS"):
+        await remote.AccessVerifier(policy, public_key).verify(token(email=""))
+
+
+def test_policy_repr_hides_the_allow_list():
+    """A config repr ends up in logs and tracebacks; the e-mail allow-list must not."""
+    policy = remote.AccessPolicy(TEAM, (AUD,), frozenset({"user@example.com"}))
+    assert "user@example.com" not in repr(policy)
+    assert "user@example.com" not in repr(remote.HttpConfig(access=policy))
+    assert policy.emails == frozenset({"user@example.com"})  # still there for the check itself
 
 
 # --- end to end over real HTTP ------------------------------------------------------

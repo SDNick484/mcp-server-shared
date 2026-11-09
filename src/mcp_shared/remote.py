@@ -55,7 +55,7 @@ import os
 import re
 import time
 from collections.abc import Awaitable, Callable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 import anyio
@@ -102,7 +102,9 @@ class AccessPolicy:
 
     team_domain: str  # "example.cloudflareaccess.com"
     audiences: tuple[str, ...]  # the application's AUD tag(s)
-    emails: frozenset[str] = frozenset()  # empty: anyone Access let through
+    # Empty: anyone Access let through. repr=False: a config repr in a log or a traceback (uvicorn
+    # prints the app's state on some startup failures) must not list who is allowed in.
+    emails: frozenset[str] = field(default=frozenset(), repr=False)
 
     @property
     def issuer(self) -> str:
@@ -278,7 +280,12 @@ class AccessVerifier:
         if self.policy.emails:
             email = str(claims.get("email", "")).lower()
             if email not in self.policy.emails:
-                raise AccessDenied(f"{email or 'this identity'} is not in MCP_ALLOWED_EMAILS")
+                # The identity is somebody Access let through but this server doesn't want; name it
+                # only enough to tell logins apart. logsafe doesn't redact e-mail addresses (and this
+                # module can't import it: shared modules stay self-contained), so mask it here.
+                local, _, domain = email.partition("@")
+                shown = f"{local[:1]}***@{domain}" if domain else "this identity"
+                raise AccessDenied(f"{shown} is not in MCP_ALLOWED_EMAILS")
         return claims
 
 

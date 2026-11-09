@@ -365,6 +365,9 @@ def test_mask_ip():
     assert mask_ip("2001:0db8:85a3:0000:0000:8a2e:0370:7334") == "x:x::7334"
     assert mask_ip("fe80::1") == "x:x::1"
     assert mask_ip("fe80::1%eth0") == "x:x::1%eth0"
+    # Dotted IPv6 forms embed a whole IPv4 address after the last ":"; it must not come through whole
+    assert mask_ip("::ffff:192.0.2.5") == "x:x::x.x.x.5"
+    assert mask_ip("64:ff9b::192.0.2.5") == "x:x::x.x.x.5"
 
     # Loopback and unspecified preserved
     assert mask_ip("127.0.0.1") == "127.0.0.1"
@@ -403,3 +406,33 @@ def test_mask_url():
     assert mask_url("mqtt://192.168.1.200:1883") == "mqtt://x.x.x.200:1883"
     assert mask_url("") == ""
     assert mask_url("not-a-url") == "not-a-url"
+    # A helper for log paths must never raise: urlsplit().port does for these, so the port text is
+    # kept as written and only the host is masked.
+    assert mask_url("http://192.0.2.5:abc/") == "http://x.x.x.5:abc/"
+    assert mask_url("http://192.0.2.5:70000/x") == "http://x.x.x.5:70000/x"
+    assert mask_url("http://[::ffff:192.0.2.5]:80/") == "http://[x:x::x.x.x.5]:80/"
+
+
+# hypothesis is optional for the siblings (it isn't in their dev dependencies): without it only
+# this test is skipped, never the module.
+try:
+    import hypothesis
+    import hypothesis.strategies as st
+except ImportError:  # pragma: no cover
+    hypothesis = None  # type: ignore[assignment]
+
+if hypothesis is not None:
+
+    @hypothesis.settings(max_examples=300, deadline=None, suppress_health_check=list(hypothesis.HealthCheck))
+    @hypothesis.given(st.ip_addresses(v=6))
+    def test_mask_ip_hides_every_ipv6_but_the_last_group(ip):
+        hypothesis.assume(not (ip.is_loopback or ip.is_unspecified))
+        masked = mask_ip(str(ip))
+        assert masked.startswith("x:x::")
+        if ip.ipv4_mapped is not None:  # the "::ffff:a.b.c.d" form
+            assert str(ip.ipv4_mapped) not in masked
+
+    @hypothesis.settings(max_examples=300, deadline=None, suppress_health_check=list(hypothesis.HealthCheck))
+    @hypothesis.given(st.text(alphabet=st.sampled_from("abc:/[]@?#.0123456789%"), max_size=30))
+    def test_mask_url_never_raises(tail):
+        mask_url("http://" + tail)

@@ -83,18 +83,45 @@ for a while, so everything looks fine until it doesn't. The script warns when a 
 
 ### Automated sync across all siblings
 
-From this repo, `scripts/sync_all_siblings.py` can update, check, or test all siblings in one go:
+From this repo, `scripts/sync_all_siblings.py` acts on every sibling checkout next to it
+(`../mcp-server-*` with a `shared.lock`; `--parent-dir` points elsewhere, `--only webos,harmony`
+narrows it down):
 
 ```sh
-# Check drift across all local sibling checkouts:
-python scripts/sync_all_siblings.py check
+# Clone the siblings you don't have yet and fast-forward the ones you do:
+python scripts/sync_all_siblings.py clone              # --https if you don't use SSH keys
 
-# Update all local sibling checkouts from this repo:
-python scripts/sync_all_siblings.py update --source .
+# Check drift: is each sibling at its locked commit (or, with --latest, at main)?
+python scripts/sync_all_siblings.py status [--latest]
 
-# Run each sibling's test suite after syncing:
+# Try a local, unpushed change in every sibling, with each sibling's CI checks:
 python scripts/sync_all_siblings.py update --source . --test
+
+# Release: move every sibling to main and open one PR per sibling that passes its checks:
+python scripts/sync_all_siblings.py update --pr --setup-venvs
 ```
+
+`update --pr` does, for each sibling:
+
+1. Fetch, then fast-forward its default branch. It must be checked out and clean: a sync commit
+   holds only sync output, so local work stops the sibling instead of being stashed or
+   rebased. Unpushed commits that are all earlier `Sync shared to …` commits are dropped
+   (the log prints how to undo it) and redone.
+2. Skip it if a PR for this exact sync (`sync-shared-<sha>`) is already open.
+3. `scripts/sync_shared.py --update`.
+4. Run what its CI test job runs, in order: `ruff check .`, `ruff format --check .`, `mypy`,
+   `pytest`, in the sibling's `.venv` (`--setup-venvs` creates a missing one with
+   `pip install -e ".[dev]"`). If one fails, the sync is undone so the next run starts
+   clean; `--keep-failed` leaves it in place to look at.
+5. Commit (`Sync shared to <sha>`, authored with the account's noreply address) on a
+   `sync-shared-<sha>` branch, push it, and open a PR with `gh`. The PR lists the files,
+   links the shared diff and reports the local checks. Older sync PRs still open are
+   flagged as superseded, not closed.
+
+`--commit` stops after a local commit on the default branch; `--push` pushes that commit
+straight to it instead of opening a PR. `--no-test` skips the local checks (CI still runs
+them). The checks are the point: rendered test templates are linted only in the siblings,
+so a template that passes here can still fail ruff in all nine.
 
 ## Design choices
 
@@ -164,8 +191,8 @@ ruff check --no-respect-gitignore tests && ruff format --check --no-respect-giti
 python scripts/sync_all_siblings.py update --source . --test
 ```
 
-If everything passes, commit and push to `mcp-server-shared`, then update the siblings
-to the new commit hash.
+If everything passes, merge the change into `mcp-server-shared` main, then propose it to every
+sibling with `python scripts/sync_all_siblings.py update --pr`.
 
 ## Why CI runs weekly on a schedule
 
@@ -202,8 +229,8 @@ seven sibling repos to trigger an update PR. We don't do that because:
 - Seven automated PRs landing at once creates notification spam and merge traffic for changes
   that might be irrelevant to most siblings (e.g., an Onkyo-specific change to `registry.py`).
 - The scheduled run lets updates batch naturally. A maintainer sees the weekly notification,
-  runs `sync_all_siblings.py update` locally, verifies all seven suites, and pushes clean PRs
-  in one sitting.
+  runs `sync_all_siblings.py update --pr` locally, which checks every sibling as its CI would
+  and opens a PR for each one that passes, in one sitting.
 
 The tradeoff is lag: a sibling might not pick up a fix for up to seven days unless someone
 syncs it manually. For the kinds of changes this repo carries (rare, stable, additive), that's

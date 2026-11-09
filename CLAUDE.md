@@ -21,6 +21,8 @@ software/systems engineer: be technical and concrete, with specific examples.
 - `tests/test_sync_shared.py`: tests for the sync script itself.
 - `shared.toml`: the manifest listing the shared files.
 - `scripts/sync_shared.py`: copies the shared files to/from siblings or GitHub.
+- `scripts/sync_all_siblings.py` (this repo only, not synced): runs that across every sibling checkout;
+  `clone`, `status`, and `update --pr` (sync, run each sibling's CI checks, open a PR per passing sibling).
 
 ## Commands
 
@@ -38,11 +40,14 @@ software/systems engineer: be technical and concrete, with specific examples.
 1. Edit the module in `src/mcp_shared/`.
 2. Edit its tests in `templates/tests/` (remember: use `__PKG__`, not `mcp_shared`).
 3. Re-render tests locally: `python scripts/sync_shared.py --source . --package mcp_shared`.
-4. Run tests and linters: `pytest && ruff check . && ruff format --check . && mypy`.
+4. Run tests and linters: `pytest && ruff check . && ruff format --check . && mypy`, plus
+   `ruff check --no-respect-gitignore tests && ruff format --check --no-respect-gitignore tests`:
+   the rendered tests are gitignored here, so plain `ruff check .` skips them, but every sibling lints them.
 5. Commit and push to `main` (or a PR branch).
 6. Sync the siblings:
    - For a local sibling checkout: `python scripts/sync_shared.py --update` in the sibling repo.
-   - For all local siblings: run `scripts/sync_all_siblings.py update` from this repo.
+   - For all local siblings: `python scripts/sync_all_siblings.py update --pr` from this repo (syncs,
+     runs each sibling's CI checks, opens a PR per sibling that passes; `clone` first if any are missing).
 
 ### Adding a new shared module
 

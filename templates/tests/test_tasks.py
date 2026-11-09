@@ -83,7 +83,9 @@ async def start():
         await asyncio.wait([task for _, task in started], timeout=1)
 
 
-async def stop_in_its_own_task(task: asyncio.Task[None], timeout: float = 5.0, grace: float = 0.25) -> asyncio.Task[None]:
+async def stop_in_its_own_task(
+    task: asyncio.Task[None], timeout: float = 5.0, grace: float = 0.25
+) -> asyncio.Task[None]:
     """Run stop_task in a separate task, waiting at most 3 s for it.
 
     Not `asyncio.wait_for(stop_task(...))`: a timeout works by cancelling the
@@ -225,7 +227,9 @@ async def test_a_task_that_already_failed_is_logged_not_raised(caplog):
 # --- stop_tasks: several at once, within one timeout -----------------------------------------------
 
 
-async def stop_all_in_its_own_task(tasks: list[asyncio.Task[None] | None], timeout: float, grace: float = 0.25) -> float:
+async def stop_all_in_its_own_task(
+    tasks: list[asyncio.Task[None] | None], timeout: float, grace: float = 0.25
+) -> float:
     """Run stop_tasks in a separate task (see stop_in_its_own_task) and return how long it took."""
     loop = asyncio.get_running_loop()
     t = loop.time()

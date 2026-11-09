@@ -171,9 +171,15 @@ def test_json_secret_redaction():
             "headers={'cf-access-client-secret': '***', 'x-api-key': '***', 'token': '***', 'host': 'h'}",
         ),
         # Device pairing secrets in JSON blobs (webOS client-key, pairing pins, Wi-Fi PSKs)
-        ('{"pairing_key": "S3CRET", "pin": "1234", "psk": "S3CRET", "code": 200}', '{"pairing_key": "***", "pin": "***", "psk": "***", "code": 200}'),
+        (
+            '{"pairing_key": "S3CRET", "pin": "1234", "psk": "S3CRET", "code": 200}',
+            '{"pairing_key": "***", "pin": "***", "psk": "***", "code": 200}',
+        ),
         # .env / shell style; names that aren't secrets stay
-        ("MQTT_PASSWORD=S3CRET CF_ACCESS_AUD=abc123 MQTT_HOST=broker", "MQTT_PASSWORD=*** CF_ACCESS_AUD=abc123 MQTT_HOST=broker"),
+        (
+            "MQTT_PASSWORD=S3CRET CF_ACCESS_AUD=abc123 MQTT_HOST=broker",
+            "MQTT_PASSWORD=*** CF_ACCESS_AUD=abc123 MQTT_HOST=broker",
+        ),
         ("HA_TOKEN=S3CRET", "HA_TOKEN=***"),
         ("MQTT_PASSWORD= (unset)", "MQTT_PASSWORD= (unset)"),
         # Header-style lines at the start of a line; a sentence mentioning the word is left alone

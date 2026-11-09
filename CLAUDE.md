@@ -3,8 +3,8 @@
 ## What this is
 
 `mcp-server-shared`: the single source of truth for the code the sibling MCP servers
-(`mcp-server-batocera`, `-harmony`, `-onkyo`, `-pixelcade`, `-shieldtv`, `-sofabaton`,
-`-steam-backlog`, `-webos`) each carry a copy of.
+(`mcp-server-batocera`, `-harmony`, `-misterfpga`, `-onkyo`, `-pixelcade`, `-shieldtv`,
+`-sofabaton`, `-steam-backlog`, `-webos`) each carry a copy of.
 
 See `README.md` for the full layout, motivation, and the sync workflow.
 
@@ -51,6 +51,13 @@ software/systems engineer: be technical and concrete, with specific examples.
 3. Add both to `shared.toml` under a new `module = "<name>"` section.
 4. Add `/tests/test_<name>.py` to `.gitignore` so the rendered copy isn't committed.
 5. Render, test, lint, and commit as above.
+
+## Conventions
+
+- The repo is public and generic. No personal names, hostnames, IP addresses, room names or
+  household references anywhere: code, docstrings, tests, docs, commit messages. Use placeholders:
+  `mcp.example.com`, `example.cloudflareaccess.com`, `user@example.com`, device keys like `tv-1`,
+  and the documentation address ranges (`192.0.2.0/24`, `2001:db8::/32`) rather than `192.168.x.x`.
 
 ## Gotchas
 

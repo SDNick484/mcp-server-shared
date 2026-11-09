@@ -43,6 +43,18 @@ Settings come from flags or the environment (flags win):
     CF_ACCESS_AUD                  the Access application's audience tag(s), comma-separated
     MCP_ALLOWED_EMAILS             optional, comma-separated
     --insecure-no-auth     serve without Access beyond this machine (trusted-LAN testing only)
+
+Stopping: OpenRC's supervise-daemon (every sibling's init script) stops a
+service with SIGTERM and SIGKILLs it 5 seconds later by default
+(``--retry SIGTERM/5``). A SIGKILL skips the lifespan shutdown, where the
+siblings close device connections and disconnect from MQTT, so everything
+uvicorn does on SIGTERM has to fit in those 5 seconds. uvicorn's default is to
+wait for every open connection to finish first, for as long as that takes.
+Today the MCP SDK's responses are SSE streams that sse-starlette closes as soon
+as it notices uvicorn exiting (it introspects ``Server.should_exit``), so in
+practice the wait is short, but that hook has broken before across versions
+(sse-starlette #132, #211). ``SHUTDOWN_TIMEOUT`` bounds the wait regardless:
+after it, uvicorn closes what's left and runs the lifespan shutdown.
 """
 
 from __future__ import annotations
@@ -81,6 +93,9 @@ FORWARDED_HEADERS = (
     "via",
 )
 CORS_ALLOW_HEADERS = b"content-type, cf-access-jwt-assertion, authorization, mcp-session-id, mcp-protocol-version"
+# Seconds uvicorn gives open connections on SIGTERM before closing them and running the lifespan
+# shutdown. 2 of supervise-daemon's 5: the rest is for the siblings' own stop timeouts.
+SHUTDOWN_TIMEOUT = 2
 _HOSTNAME_RE = re.compile(r"^[A-Za-z0-9.-]+$")
 
 
@@ -450,6 +465,28 @@ def build_app(
     return AccessMiddleware(app, verifier, local_only=cfg.local_only, health_check=health_check)
 
 
+def uvicorn_settings(cfg: HttpConfig) -> dict[str, Any]:
+    """The keyword arguments ``serve_http`` runs uvicorn with, so a test can run the very same server.
+
+    - log_config=None: uvicorn's own log lines (access logs carry client addresses) go through the
+      root logger, so the server's redacting handler (logsafe.py) formats them, not uvicorn's own.
+    - proxy_headers=False: the client address stays the real peer (loopback, behind cloudflared);
+      this module decides for itself what to trust from forwarding headers.
+    - timeout_graceful_shutdown: bounds the wait for open connections on SIGTERM (see "Stopping"
+      in the module docstring). When it fires, uvicorn logs "Cancel N running task(s), timeout
+      graceful shutdown exceeded" at ERROR; with a client attached that is the expected path.
+    """
+    return {
+        "host": cfg.bind,
+        "port": cfg.port,
+        "log_level": "info",
+        "log_config": None,
+        "proxy_headers": False,
+        "lifespan": "on",
+        "timeout_graceful_shutdown": SHUTDOWN_TIMEOUT,
+    }
+
+
 def serve_http(  # pragma: no cover
     mcp: MCPServer, cfg: HttpConfig, *, health_check: HealthChecker | None = None
 ) -> None:
@@ -461,9 +498,4 @@ def serve_http(  # pragma: no cover
         log.warning("Serving %s on %s:%s WITHOUT Cloudflare Access checks.", cfg.path, cfg.bind, cfg.port)
     else:
         log.info("Serving %s on %s:%s; requests need a %s assertion.", cfg.path, cfg.bind, cfg.port, cfg.access.issuer)
-    # log_config=None: uvicorn's own log lines (access logs carry client
-    # addresses) go through the root logger, so the server's redacting
-    # handler (logsafe.py) formats them, instead of uvicorn's plain one.
-    uvicorn.run(
-        app, host=cfg.bind, port=cfg.port, log_level="info", log_config=None, proxy_headers=False, lifespan="on"
-    )
+    uvicorn.run(app, **uvicorn_settings(cfg))

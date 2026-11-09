@@ -40,5 +40,10 @@ jobs:
         run: python scripts/sync_shared.py --source . --package mcp_shared
       - run: ruff check .
       - run: ruff format --check .
+      # The rendered tests are gitignored here, and ruff skips gitignored files by default, so
+      # `.` above never reaches them. Lint them explicitly: every sibling commits them and
+      # lints them in its own CI, so a long line in a template fails all nine there.
+      - run: ruff check --no-respect-gitignore tests
+      - run: ruff format --check --no-respect-gitignore tests
       - run: mypy
       - run: pytest --cov --cov-report=term-missing

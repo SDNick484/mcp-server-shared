@@ -120,7 +120,8 @@ Choices worth knowing about, and why:
 - **Templates stay out of linting:** The files in `templates/tests/` are excluded from ruff
   and mypy in this repo because `__PKG__` isn't a valid Python identifier. To test them here,
   `scripts/sync_shared.py --source . --package mcp_shared` renders them into `tests/`, which
-  is ignored by git.
+  is ignored by git. Ruff skips gitignored files by default, so lint the rendered copies with
+  `ruff check --no-respect-gitignore tests` (CI does): siblings commit and lint them.
 - **No orphan pruning:** `--update` overwrites files declared in `shared.toml`. It does not
   delete files that were previously synced but removed from `shared.toml`. You have to clean
   them by hand if they're unused.
@@ -157,6 +158,7 @@ If a sibling has a format 1 lockfile:
 # 2. Render and test locally:
 python scripts/sync_shared.py --source . --package mcp_shared
 pytest && ruff check . && ruff format --check . && mypy
+ruff check --no-respect-gitignore tests && ruff format --check --no-respect-gitignore tests
 
 # 3. Test across all local siblings:
 python scripts/sync_all_siblings.py update --source . --test

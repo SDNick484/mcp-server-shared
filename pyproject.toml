@@ -43,7 +43,8 @@ exclude_also = ["if __name__ == .__main__.:", "pragma: no cover"]
 line-length = 120
 src = ["src", "tests"]
 # The templates hold __PKG__, which isn't a real module (isort can't place it).
-# They're linted as rendered, in tests/, which is what every sibling runs.
+# They're linted as rendered, in tests/, which is what every sibling runs. tests/ is
+# gitignored here, so that takes --no-respect-gitignore (see the CI workflow).
 extend-exclude = ["templates"]
 
 [tool.ruff.lint]

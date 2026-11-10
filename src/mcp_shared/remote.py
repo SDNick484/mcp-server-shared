@@ -296,8 +296,9 @@ class AccessVerifier:
             email = str(claims.get("email", "")).lower()
             if email not in self.policy.emails:
                 # The identity is somebody Access let through but this server doesn't want; name it
-                # only enough to tell logins apart. logsafe doesn't redact e-mail addresses (and this
-                # module can't import it: shared modules stay self-contained), so mask it here.
+                # only enough to tell logins apart. logsafe's redact() would mask it in a log line, but
+                # not with redaction off, and this module can't import logsafe's mask_email (shared
+                # modules stay self-contained), so mask it here the same way.
                 local, _, domain = email.partition("@")
                 shown = f"{local[:1]}***@{domain}" if domain else "this identity"
                 raise AccessDenied(f"{shown} is not in MCP_ALLOWED_EMAILS")

@@ -1,5 +1,5 @@
 # Dependabot keeps the pinned action SHAs in .github/workflows/ and the dev/runtime bounds in
-# pyproject.toml current. Weekly, one PR per ecosystem at most, so a Monday brings at most two
+# pyproject.toml current. Weekly, one PR per ecosystem at most, so a Monday brings at most three
 # PRs to look at. The shared modules' runtime bounds (mcp, pyjwt, uvicorn) are mirrored in the
 # siblings' pyproject.toml files: a bump here is a reminder to bump them there.
 version: 2
@@ -11,6 +11,17 @@ updates:
       day: monday
     groups:
       actions:
+        patterns: ["*"]
+  # The hook revs in .pre-commit-config.yaml (SHA + "# frozen: vX" comment, both bumped).
+  # Local hooks are skipped, which is why the rendered-tests lint reuses ruff-pre-commit's hooks
+  # instead of pinning a second ruff in a local hook's additional_dependencies.
+  - package-ecosystem: pre-commit
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    groups:
+      hooks:
         patterns: ["*"]
   - package-ecosystem: pip
     directory: /

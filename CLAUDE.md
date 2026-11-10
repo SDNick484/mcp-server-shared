@@ -32,6 +32,7 @@ software/systems engineer: be technical and concrete, with specific examples.
 - `ruff check .`: lint
 - `ruff format --check .`: check formatting
 - `mypy`: type-check
+- `pre-commit install`: once per clone; commits then render and lint the templates as a sibling would
 
 ## Workflows
 

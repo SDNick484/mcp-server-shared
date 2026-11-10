@@ -1,0 +1,57 @@
+# The shared-drift check, for the siblings to call instead of each carrying its own copy:
+#
+#   jobs:
+#     shared-drift:
+#       uses: SDNick484/mcp-server-shared/.github/workflows/shared-drift.yml@<40-char SHA>  # v0.1.0
+#
+# The caller's own `on:` decides when it runs; this workflow only defines the job. It checks out
+# the *caller's* repo (a called workflow runs in the caller's context) and runs that repo's own
+# scripts/sync_shared.py, so a sibling is checked by the script version its lock pins:
+#   - always:                             --check            (files match the commit in shared.lock)
+#   - on schedule / workflow_dispatch:    --check --latest   (... and that commit is main's head)
+# Pass `latest: true` to run the second check on other events too.
+#
+# Pin the ref to a commit SHA with the tag as a comment (Dependabot's github-actions ecosystem
+# bumps both, as for any action). This repo's own CI doesn't call it: it has no shared.lock.
+name: shared-drift
+
+on:
+  workflow_call:
+    inputs:
+      latest:
+        description: Also check the lock against mcp-server-shared main, whatever the event
+        type: boolean
+        default: false
+      python-version:
+        description: Python for sync_shared.py; the oldest supported keeps the stdlib-only script honest
+        type: string
+        default: "3.11"
+
+# A called workflow can only narrow the caller's token, never widen it. Read is all this needs.
+permissions:
+  contents: read
+
+jobs:
+  shared-drift:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    # Job-level, with its own suffix: in a called workflow github.workflow is the *caller's* name,
+    # and a group equal to the caller's own workflow-level group deadlocks the run. The event is in
+    # the group, and only PR runs cancel: a push to main must not cancel the weekly --latest check.
+    concurrency:
+      group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}-shared-drift
+      cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+    env:
+      GITHUB_TOKEN: ${{ github.token }}  # for api.github.com's rate limit; raw files are fetched without it
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false  # nothing here pushes
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: ${{ inputs.python-version }}
+      - name: Shared files match the locked commit
+        run: python scripts/sync_shared.py --check
+      - name: Shared files match mcp-server-shared main
+        if: inputs.latest || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+        run: python scripts/sync_shared.py --check --latest

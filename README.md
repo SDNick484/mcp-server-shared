@@ -163,6 +163,8 @@ Choices worth knowing about, and why:
 
 ## Workflows
 
+**Pre-commit:** run `pre-commit install` once per clone (it comes with `pip install -e ".[dev]"`); each commit then renders the test templates and lints them as the siblings will, which plain `ruff check .` can't (the rendered copies are gitignored here).
+
 ### Upgrading from format 1
 
 If a sibling has a format 1 lockfile:

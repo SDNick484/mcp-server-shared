@@ -1,0 +1,46 @@
+# pre-commit install   (once per clone; then every `git commit` runs these on the staged files)
+# pre-commit run --all-files   (the whole tree, as CI does)
+#
+# Revs are commit SHAs, not tags (a tag can be moved); the comment is the tag the SHA was taken
+# from. Dependabot (.github/dependabot.yml, ecosystem pre-commit) bumps both together.
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: 3e8a8703264a2f4a69428a0aa4dcb512790b2c8c  # frozen: v6.0.0
+    hooks:
+      - id: check-toml
+      - id: check-yaml
+      - id: check-merge-conflict
+      - id: end-of-file-fixer
+      - id: trailing-whitespace
+
+  # Before the ruff hooks below that lint tests/: hooks run in the order listed here.
+  - repo: local
+    hooks:
+      - id: render-shared-tests
+        name: render the shared tests into tests/
+        # The rendered copies are gitignored here, so writing them never dirties the commit.
+        entry: python scripts/sync_shared.py --source . --package mcp_shared
+        language: python
+        pass_filenames: false
+        files: ^(templates/|shared\.toml$|scripts/sync_shared\.py$|pyproject\.toml$)
+
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: c0f278f1254ccc8fb09676bcdb8d847e7db493e5  # frozen: v0.17.4
+    hooks:
+      - id: ruff-check
+      - id: ruff-format
+      # The rendered tests, as every sibling lints them. `ruff .` skips them (gitignored here),
+      # which is how a long template line once failed all nine siblings' CI (#25). Same ruff,
+      # same rev as above: these are the same hooks with different arguments.
+      - id: ruff-check
+        alias: ruff-check-rendered-tests
+        name: ruff check (rendered tests)
+        args: [--no-respect-gitignore, tests]
+        pass_filenames: false
+        files: ^(templates/|shared\.toml$|scripts/sync_shared\.py$|pyproject\.toml$)
+      - id: ruff-format
+        alias: ruff-format-rendered-tests
+        name: ruff format --check (rendered tests)
+        args: [--check, --no-respect-gitignore, tests]
+        pass_filenames: false
+        files: ^(templates/|shared\.toml$|scripts/sync_shared\.py$|pyproject\.toml$)

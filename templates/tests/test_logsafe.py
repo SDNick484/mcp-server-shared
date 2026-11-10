@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import logging
 import re
+import time
 
 import pytest
 
@@ -240,6 +241,15 @@ def test_email_rule_leaves_look_alikes_alone(line, expected):
     assert redact(line) == expected
 
 
+@pytest.mark.parametrize("blob", ["a" * 100_000, "a" * 100_000 + "@", "0" * 100_000 + "://", "a." * 50_000 + "@"])
+def test_a_long_token_is_redacted_in_linear_time(blob):
+    # Logging runs on the event loop: a rule that backtracks over a long hex/base64 blob stalls the
+    # server. 100 KB took 20 s with the old unanchored URL-password rule; linear rules take ms.
+    start = time.perf_counter()
+    redact(f"payload {blob} end")
+    assert time.perf_counter() - start < 2.0
+
+
 def test_email_addresses_show_when_address_redaction_is_off():
     # An address identifies a person; it isn't a credential, so --no-redact shows it like an IP.
     assert redact_secrets("denied: user@example.com") == "denied: user@example.com"
@@ -279,6 +289,9 @@ if hypothesis is not None:
     @hypothesis.given(st.ip_addresses(v=6), st.text(alphabet="abcxyz ,.;", max_size=8))
     def test_no_ipv6_survives_redact(ip, around):
         hypothesis.assume(not (ip.is_loopback or ip.is_unspecified))
+        # A dotted tail of 0.x or 127.x ("::ffff:0.0.0.1") is kept on purpose, as the bare 0.x and
+        # 127.x addresses are (test_no_ipv4_survives_redact makes the same assumption).
+        hypothesis.assume(not str(ip).rsplit(":", 1)[1].startswith(("127.", "0.")))
         assert str(ip) not in redact(f"{around} {ip} {around}")
 
     @needs_hypothesis

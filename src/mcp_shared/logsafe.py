@@ -73,7 +73,9 @@ _BARE_MAC = re.compile(r"(?<![0-9A-Za-z-])([0-9A-Fa-f]{8})([0-9A-Fa-f]{4})(?![0-
 _EMAIL = re.compile(
     r"(?<![\w.%+-])(?<!://)([A-Za-z0-9._%+-]++)@((?:[A-Za-z0-9-]++\.)+[A-Za-z]{2,63})(?![A-Za-z0-9-]|\.[A-Za-z0-9]|:\S)"
 )
-_URL_PASSWORD = re.compile(r"(\w+://[^/\s:@?#]+):[^@/\s?#]+@")
+# Anchored at the start of a word: unanchored, a long run of word characters (a hex or base64 blob)
+# was rescanned from every offset, quadratic in the length of the line (20 s for 100 KB).
+_URL_PASSWORD = re.compile(r"(?<!\w)(\w++://[^/\s:@?#]+):[^@/\s?#]+@")
 # The names whose value is a credential wherever they appear: as a query parameter, as a key in a
 # JSON object or a Python dict/headers repr, or as a header line. One vocabulary, so a name added
 # for one shape (an OAuth callback's ?access_token=) is caught in the others too. `pin` and `psk`

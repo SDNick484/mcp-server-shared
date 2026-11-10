@@ -203,8 +203,38 @@ schedule:
   - cron: "0 9 * * 1"   # 09:00 UTC every Monday
 ```
 
-This runs `python scripts/sync_shared.py --check-latest`, which checks whether `shared.lock`
-is behind `mcp-server-shared`'s `main` branch.
+On that run the shared-drift job adds `python scripts/sync_shared.py --check --latest`, which
+checks whether `shared.lock` is behind `mcp-server-shared`'s `main` branch.
+
+### The drift job is a reusable workflow, not a synced file
+
+`.github/workflows/shared-drift.yml` here is the one definition of the shared-drift job
+(`on: workflow_call`). A sibling's `ci.yml` calls it, pinned like an action:
+
+```yaml
+jobs:
+  shared-drift:
+    uses: SDNick484/mcp-server-shared/.github/workflows/shared-drift.yml@<40-char SHA>  # v0.1.0
+```
+
+It checks out the caller and runs the caller's own `sync_shared.py --check`, plus `--check --latest`
+on `schedule`/`workflow_dispatch` (or with `latest: true`). Read-only token, SHA-pinned actions,
+`timeout-minutes`, and a job-level `concurrency` group (a called workflow sharing the caller's
+workflow-level group deadlocks, since `github.workflow` there is the caller's name).
+
+The alternative was to make the workflow a synced file, like the modules. Why not:
+
+| | Reusable workflow (chosen) | Synced template |
+|---|---|---|
+| Copies | none; one SHA per sibling in `ci.yml` | one file per sibling, checked by `--check` |
+| CI-time dependency on this repo | yes, but `--check` already fetches from here at CI time | none beyond what `--check` already has |
+| Sibling-specific triggers | stay in the sibling's `ci.yml` | one file for all: same schedule everywhere, or templating |
+| Pushing a sync | an ordinary commit | touches `.github/workflows/`: needs a token with `workflow` scope |
+| Updating | Dependabot bumps the SHA (and `# vX` comment) once `main` is tagged | the next `sync_all_siblings.py update` |
+| Pins to keep straight | two: `shared.lock` and the `uses:` SHA | one |
+
+The two-pins cost is small: the workflow changes rarely, and whichever SHA it is pinned to, it runs
+the sibling's own sync script against the sibling's own lock.
 
 ### Why not fail normal PRs when the lock is behind?
 

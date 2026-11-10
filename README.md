@@ -117,6 +117,12 @@ python scripts/sync_all_siblings.py update --pr --setup-venvs
    `sync-shared-<sha>` branch, push it, and open a PR with `gh`. The PR lists the files,
    links the shared diff and reports the local checks. Older sync PRs still open are
    flagged as superseded, not closed.
+6. With `--auto-merge` (off by default): `gh pr merge --auto --squash` on the new PR, so it
+   merges itself once CI passes. Skipped, with the reason in the table, where the repo has
+   "Allow auto-merge" off, or where the default branch requires no status checks (branch
+   protection or a ruleset): there GitHub's auto-merge merges at once, before CI has run. As of
+   2026-11 every sibling is in both cases, so it takes a ruleset requiring the CI jobs, plus the
+   repo setting, before it does anything.
 
 `--commit` stops after a local commit on the default branch; `--push` pushes that commit
 straight to it instead of opening a PR. `--no-test` skips the local checks (CI still runs

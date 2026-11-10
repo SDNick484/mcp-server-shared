@@ -329,6 +329,13 @@ class FakeGh:
         self.created: list[list[str]] = []
         self.repos: list[str] = []
         self.logged_in = True
+        # For --auto-merge, per sibling: the repo setting, the checks branch protection and rulesets
+        # require (None: the API call fails), and what `gh pr merge` says (None: it works).
+        self.auto_merge_allowed: dict[str, bool] = {}
+        self.protected_checks: dict[str, list[str] | None] = {}
+        self.ruleset_checks: dict[str, list[str]] = {}
+        self.merge_error: dict[str, str] = {}
+        self.merged: list[list[str]] = []
 
     def __call__(self, args: Sequence[str], *, cwd: Path | None = None) -> subprocess.CompletedProcess[str]:
         a = list(args)
@@ -347,6 +354,24 @@ class FakeGh:
                 u for (n, b), u in self.open.items() if n == cwd.name and b.startswith("sync-shared-") and b != current
             ]
             return subprocess.CompletedProcess(a, 0, stdout="".join(u + "\n" for u in urls), stderr="")
+        if a[:2] == ["api", "repos/{owner}/{repo}"]:
+            return subprocess.CompletedProcess(
+                a, 0, stdout=f"{str(self.auto_merge_allowed.get(cwd.name, True)).lower()}\n", stderr=""
+            )
+        if a[0] == "api" and a[1].endswith("/protection/required_status_checks"):
+            if cwd.name not in self.protected_checks:
+                return subprocess.CompletedProcess(a, 1, stdout="", stderr="gh: Branch not protected (HTTP 404)")
+            checks = self.protected_checks[cwd.name]
+            if checks is None:
+                return subprocess.CompletedProcess(a, 1, stdout="", stderr="gh: Resource not accessible (HTTP 403)")
+            return subprocess.CompletedProcess(a, 0, stdout="".join(c + "\n" for c in checks), stderr="")
+        if a[0] == "api" and "/rules/branches/" in a[1]:
+            checks = self.ruleset_checks.get(cwd.name, [])
+            return subprocess.CompletedProcess(a, 0, stdout="".join(c + "\n" for c in checks), stderr="")
+        if a[:2] == ["pr", "merge"]:
+            self.merged.append(a)
+            error = self.merge_error.get(cwd.name)
+            return subprocess.CompletedProcess(a, 1 if error else 0, stdout="", stderr=error or "")
         if a[:2] == ["pr", "create"]:
             self.created.append(a)
             url = f"https://github.example/{cwd.name}/pull/{len(self.created)}"
@@ -554,3 +579,45 @@ def test_select_siblings_accepts_short_and_full_names(tmp_path: Path):
         "mcp-server-gamma",
     ]
     assert mod.select_siblings(paths, None) == paths
+
+
+def test_update_pr_auto_merge_only_where_checks_gate_it(tmp_path: Path, portfolio, capsys):
+    mod, _, gh = portfolio
+    names = ["alpha", "beta", "gamma", "delta", "eps", "zeta"]
+    for name in names:
+        make_git_sibling(tmp_path, f"mcp-server-{name}", f"{name}_mcp")
+    gh.protected_checks["mcp-server-alpha"] = ["test (3.11)", "alpine"]  # classic protection: merges
+    gh.ruleset_checks["mcp-server-beta"] = ["shared-drift"]  # a ruleset: merges too
+    gh.auto_merge_allowed["mcp-server-gamma"] = False  # repo setting off
+    # delta: neither protection nor rulesets, so auto-merge would merge before CI
+    gh.protected_checks["mcp-server-eps"] = None  # can't read protection
+    gh.protected_checks["mcp-server-zeta"] = ["test"]
+    gh.merge_error["mcp-server-zeta"] = "Pull request is in clean status"
+
+    assert mod.main(["update", "--parent-dir", str(tmp_path / "src"), "--pr", "--auto-merge"]) == 0  # never fails
+    table = capsys.readouterr().out
+    table = table[table.index("SIBLING") :]
+    rows = {line.split()[0]: line for line in table.splitlines()[2:]}
+
+    assert "auto-merge on (squash, once test (3.11), alpine pass)" in rows["mcp-server-alpha"]
+    assert "auto-merge on (squash, once shared-drift pass)" in rows["mcp-server-beta"]
+    assert "auto-merge skipped: turned off for the repo" in rows["mcp-server-gamma"]
+    assert "auto-merge skipped: main requires no status checks" in rows["mcp-server-delta"]
+    assert "auto-merge skipped: couldn't read main's required checks (branch protection: " in rows["mcp-server-eps"]
+    assert "auto-merge failed (Pull request is in clean status)" in rows["mcp-server-zeta"]
+    assert all(row.split()[3] == "PR" for row in rows.values())  # every PR opened regardless
+    merged = sorted(m[2].rsplit("/", 3)[1] for m in gh.merged)
+    assert merged == ["mcp-server-alpha", "mcp-server-beta", "mcp-server-zeta"]
+    assert all(m[3:] == ["--auto", "--squash"] for m in gh.merged)
+
+
+def test_auto_merge_is_off_by_default_and_only_with_pr(tmp_path: Path, portfolio, capsys):
+    mod, _, gh = portfolio
+    make_git_sibling(tmp_path, "mcp-server-alpha", "alpha_mcp")
+    gh.protected_checks["mcp-server-alpha"] = ["test"]
+    assert mod.main(["update", "--parent-dir", str(tmp_path / "src"), "--pr"]) == 0
+    assert gh.merged == [] and "auto-merge" not in capsys.readouterr().out
+    for mode in ([], ["--commit"], ["--push"]):
+        with pytest.raises(SystemExit):
+            mod.main(["update", "--parent-dir", str(tmp_path / "src"), *mode, "--auto-merge"])
+        assert "--auto-merge only goes with --pr" in capsys.readouterr().err

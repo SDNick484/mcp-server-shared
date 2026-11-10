@@ -487,6 +487,7 @@ def release_sibling(
     setup_venvs: bool,
     keep_failed: bool,
     shared_main: str | None,
+    auto_merge: bool = False,
 ) -> StatusRow:
     """Refresh, sync, check, commit and (per `mode`) push or open a PR for one sibling."""
     info = read_sibling_info(sibling)
@@ -577,7 +578,10 @@ def release_sibling(
         )
         if proc.returncode != 0:
             return row(f"PR failed ({(proc.stderr or proc.stdout).strip()}); branch {branch} pushed", False, new)
-        status = f"PR {proc.stdout.strip()}"
+        url = proc.stdout.strip()
+        status = f"PR {url}"
+        if auto_merge:
+            status += "; " + enable_auto_merge(sibling, url, default)
         # Older sync PRs still open are now stale: flag them rather than close them unasked.
         others = _gh(
             ["pr", "list", "--state", "open", "--json", "headRefName,url", "-q"]
@@ -597,6 +601,54 @@ def release_sibling(
             _git(sibling, "switch", "--quiet", default)  # ready for the next run
 
 
+def required_checks(sibling: Path, branch: str) -> list[str]:
+    """The status checks `branch` requires, from classic branch protection and from rulesets.
+
+    Raises SiblingError when GitHub can't say (a 404 from branch protection only means "not
+    protected"). gh fills in {owner}/{repo} from the sibling's origin remote.
+    """
+    checks: list[str] = []
+    protection = _gh(
+        ["api", f"repos/{{owner}}/{{repo}}/branches/{branch}/protection/required_status_checks"]
+        + ["--jq", ".contexts[]"],
+        cwd=sibling,
+    )
+    if protection.returncode == 0:
+        checks += protection.stdout.splitlines()
+    elif "HTTP 404" not in protection.stderr:
+        raise SiblingError(f"branch protection: {(protection.stderr or protection.stdout).strip()}")
+    rules = _gh(
+        ["api", f"repos/{{owner}}/{{repo}}/rules/branches/{branch}", "--jq"]
+        + ['.[] | select(.type == "required_status_checks") | .parameters.required_status_checks[].context'],
+        cwd=sibling,
+    )
+    if rules.returncode != 0:
+        raise SiblingError(f"rulesets: {(rules.stderr or rules.stdout).strip()}")
+    checks += rules.stdout.splitlines()
+    return list(dict.fromkeys(c.strip() for c in checks if c.strip()))
+
+
+def enable_auto_merge(sibling: Path, pr_url: str, base: str) -> str:
+    """Turn on squash auto-merge for a sync PR, or say why not: a clause for the status row.
+
+    Never a failure: the PR is open either way, and a person can merge it. Without required
+    checks GitHub's auto-merge merges at once, before CI has run, so that case is skipped.
+    """
+    allowed = _gh(["api", "repos/{owner}/{repo}", "--jq", ".allow_auto_merge"], cwd=sibling)
+    if allowed.returncode == 0 and allowed.stdout.strip() == "false":
+        return "auto-merge skipped: turned off for the repo (Settings > General > Allow auto-merge)"
+    try:
+        checks = required_checks(sibling, base)
+    except SiblingError as exc:
+        return f"auto-merge skipped: couldn't read {base}'s required checks ({exc})"
+    if not checks:
+        return f"auto-merge skipped: {base} requires no status checks, so it would merge before CI ran"
+    proc = _gh(["pr", "merge", pr_url, "--auto", "--squash"], cwd=sibling)
+    if proc.returncode != 0:
+        return f"auto-merge failed ({(proc.stderr or proc.stdout).strip()})"
+    return f"auto-merge on (squash, once {', '.join(checks)} pass)"
+
+
 def run_update(
     parent_dir: Path,
     *,
@@ -607,6 +659,7 @@ def run_update(
     setup_venvs: bool = False,
     keep_failed: bool = False,
     only: str | None = None,
+    auto_merge: bool = False,
 ) -> int:
     siblings = select_siblings(discover_siblings(parent_dir), only)
     if not siblings:
@@ -629,6 +682,7 @@ def run_update(
                 setup_venvs=setup_venvs,
                 keep_failed=keep_failed,
                 shared_main=shared_main,
+                auto_merge=auto_merge,
             )
             for sibling in siblings
         ]
@@ -813,6 +867,13 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         default=False,
         help="with --pr/--commit/--push: leave a sync whose checks failed in the tree (default: undo it)",
     )
+    update_parser.add_argument(
+        "--auto-merge",
+        action="store_true",
+        default=False,
+        help="with --pr: turn on squash auto-merge for each new PR; skipped (and said why) where the repo "
+        "has auto-merge off or its default branch requires no checks, which would merge before CI ran",
+    )
 
     args = parser.parse_args(list(argv) if argv is not None else None)
     if args.command is None:
@@ -824,6 +885,8 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
             update_parser.error("--dry-run doesn't go with --pr/--commit/--push; use it alone to preview")
         if args.mode is None and (args.no_test or args.keep_failed):
             update_parser.error("--no-test and --keep-failed only go with --pr/--commit/--push")
+        if args.auto_merge and args.mode != "pr":
+            update_parser.error("--auto-merge only goes with --pr")
         if args.mode is not None and args.test and args.no_test:
             update_parser.error("--test and --no-test contradict each other")
     return args
@@ -846,6 +909,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             setup_venvs=bool(args.setup_venvs),
             keep_failed=bool(args.keep_failed),
             only=only,
+            auto_merge=bool(args.auto_merge),
         )
     return run_status(parent_dir, latest=bool(args.latest), only=only)
 

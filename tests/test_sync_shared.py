@@ -7,6 +7,7 @@ tests the siblings get.
 from __future__ import annotations
 
 import importlib.util
+import json
 import subprocess
 import sys
 from pathlib import Path
@@ -76,13 +77,19 @@ def github(monkeypatch):
     commits = {OLD: snapshot("1"), NEW: snapshot("2")}
     # main's history is OLD -> NEW. `compare` answers how a commit relates to main, like GitHub's
     # endpoint; "history" is the SHAs on main, "on_main_check" counts those calls.
-    state = {"main": NEW, "requests": 0, "history": [OLD, NEW], "on_main_check": 0}
+    # "tags" is name -> SHA, served like GitHub's /tags endpoint (untagged unless a test adds some).
+    state = {"main": NEW, "requests": 0, "history": [OLD, NEW], "on_main_check": 0, "tags": {}}
 
     def fake_get(url: str, accept: str | None = None) -> bytes:
         state["requests"] += 1
         if url.endswith("/commits/main"):
             assert accept == "application/vnd.github.sha"
             return str(state["main"]).encode()
+        if "/tags?" in url:
+            if state["tags"] is None:
+                raise sync.SyncError(f"GET {url}: HTTP 403 Forbidden (rate limited? set GITHUB_TOKEN)")
+            tags = dict(state["tags"])
+            return json.dumps([{"name": name, "commit": {"sha": sha}} for name, sha in tags.items()]).encode()
         if "/compare/main..." in url:
             state["on_main_check"] += 1
             sha = url.rsplit("...", 1)[1]
@@ -661,7 +668,7 @@ def test_unknown_lock_keys_are_warned_about(github, sibling, capsys):
     assert run(sync, sibling) == 0
     err = capsys.readouterr().err
     assert "shared.lock has keys this script doesn't use: excludes" in err
-    assert "it reads repo, commit, package, exclude" in err
+    assert "it reads repo, commit, version, package, exclude" in err
     assert (sibling / "src/demo_mcp/extra.py").exists()  # the typo didn't exclude anything, as warned
 
 
@@ -788,3 +795,79 @@ def test_force_with_a_non_writing_mode_is_refused(github, sibling, args):
     sync, _, _ = github
     with pytest.raises(SystemExit):
         run(sync, sibling, *args)
+
+
+# --- version tags ----------------------------------------------------------------------------------
+def test_update_records_the_tag_on_main_and_check_shows_it(github, sibling, capsys):
+    sync, _, state = github
+    state["tags"] = {"v0.1.0": NEW, "v0.0.9": OLD, "not-a-version": NEW}
+    assert run(sync, sibling, "--update") == 0
+    lock = (sibling / "shared.lock").read_text()
+    assert f'commit = "{NEW}"\nversion = "v0.1.0"\n' in lock
+    assert f"shared.lock: {OLD[:7]} -> {NEW[:7]} (v0.1.0);" in capsys.readouterr().out
+    assert run(sync, sibling, "--check") == 0
+    assert f"all 3 match mcp-server-shared at {NEW[:7]} v0.1.0 (locked)" in capsys.readouterr().out
+
+
+def test_an_untagged_main_writes_no_version_and_drops_a_stale_one(github, sibling):
+    sync, _, state = github
+    (sibling / "shared.lock").write_text(
+        f'repo = "SDNick484/mcp-server-shared"\ncommit = "{OLD}"\nversion = "v0.0.9"\npackage = "demo_mcp"\n'
+    )
+    assert run(sync, sibling, "--update") == 0
+    lock = (sibling / "shared.lock").read_text()
+    assert "version" not in lock.replace("# ", "").split("repo =", 1)[1]  # the header may mention it
+
+
+def test_tagging_the_locked_commit_later_is_picked_up_by_update(github, sibling, capsys):
+    sync, _, state = github
+    run(sync, sibling, "--update")
+    state["tags"] = {"v0.1.0": NEW}
+    assert run(sync, sibling, "--update") == 0
+    assert f"shared.lock: already at {NEW[:7]} (v0.1.0)" in capsys.readouterr().out
+    assert 'version = "v0.1.0"' in (sibling / "shared.lock").read_text()
+
+
+def test_of_two_tags_on_one_commit_the_highest_release_wins(github, sibling):
+    sync, _, state = github
+    state["tags"] = {"v1.2.0-rc1": NEW, "v1.10.0": NEW, "v1.9.0": NEW, "v1.10.0-rc2": NEW}
+    run(sync, sibling, "--update")
+    assert 'version = "v1.10.0"' in (sibling / "shared.lock").read_text()
+
+
+def test_a_failed_tag_lookup_warns_and_keeps_what_it_can(github, sibling, capsys):
+    sync, _, state = github
+    state["tags"] = {"v0.1.0": NEW}
+    run(sync, sibling, "--update")
+    state["tags"] = None  # rate limited from here on
+    assert run(sync, sibling, "--update") == 0  # same commit: the version it had is kept
+    assert 'version = "v0.1.0"' in (sibling / "shared.lock").read_text()
+    assert "couldn't look up a version tag" in capsys.readouterr().err
+    state["main"] = OLD  # a different commit: its tag is unknown, so none is written
+    state["history"] = [NEW, OLD]
+    assert run(sync, sibling, "--update") == 0
+    assert "version" not in (sibling / "shared.lock").read_text().split("repo =", 1)[1]
+
+
+def test_a_lock_with_version_round_trips_and_a_bad_one_is_refused(github, sibling, capsys):
+    sync, _, _ = github
+    text = f'repo = "SDNick484/mcp-server-shared"\ncommit = "{OLD}"\nversion = "v0.1.0"\npackage = "demo_mcp"\n'
+    (sibling / "shared.lock").write_text(text)
+    lock = sync.read_lock(sibling)
+    assert lock.version == "v0.1.0"
+    (sibling / "shared.lock").write_text(lock.dump())
+    assert sync.read_lock(sibling) == lock
+    assert "doesn't use" not in capsys.readouterr().err  # a known key: no warning
+    for bad in ['"0.1.0"', '"v1\\" injected = \\"x"', "1"]:
+        (sibling / "shared.lock").write_text(text.replace('"v0.1.0"', bad))
+        assert run(sync, sibling, "--check") == 2
+        assert "version must be a tag like" in capsys.readouterr().err
+
+
+def test_version_tag_handles_odd_answers(github, monkeypatch):
+    sync, _, _ = github
+    monkeypatch.setattr(sync, "_get", lambda url, accept=None: b"<html>")
+    with pytest.raises(sync.SyncError, match="isn't JSON"):
+        sync.version_tag("SDNick484/mcp-server-shared", NEW)
+    monkeypatch.setattr(sync, "_get", lambda url, accept=None: b'{"message": "Not Found"}')
+    assert sync.version_tag("SDNick484/mcp-server-shared", NEW) is None

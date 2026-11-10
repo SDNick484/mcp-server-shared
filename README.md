@@ -43,9 +43,16 @@ Each sibling carries one small file, `shared.lock`, plus the copies themselves:
 # shared.lock, in a sibling
 repo = "SDNick484/mcp-server-shared"
 commit = "73e65ec9e63c8c3a1b3831697da56c5b86854a5c"   # a commit on this repo's main
+version = "v0.1.0"                                      # written by --update: the tag on that commit, if any
 package = "webos_mcp"                                   # what replaces __PKG__
 exclude = ["registry"]                                  # optional: modules this sibling doesn't take
 ```
+
+`version` is a label for people (`--check` and `sync_all_siblings.py status` show it); the
+`commit` is still the pin. `--update` writes the release tag (`vX.Y.Z[-pre]`) pointing at the
+commit it moves to, and leaves the key out when that commit is untagged. A script from before
+`version` existed warns that it doesn't know the key and otherwise ignores it; deleting the line
+is always safe.
 
 Running the sync script in a sibling:
 

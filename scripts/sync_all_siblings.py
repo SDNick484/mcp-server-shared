@@ -73,6 +73,7 @@ class SiblingInfo:
     package: str
     commit: str
     repo: str = f"{OWNER}/{SHARED_REPO_NAME}"
+    version: str | None = None  # shared.lock's optional release tag
 
     @property
     def name(self) -> str:
@@ -133,11 +134,13 @@ def read_sibling_info(sibling: Path) -> SiblingInfo:
         package = str(data.get("package") or "?")
         commit = str(data.get("commit") or "?")
         repo = str(data.get("repo") or f"{OWNER}/{SHARED_REPO_NAME}")
+        version = str(data["version"]) if data.get("version") else None
     except (OSError, tomllib.TOMLDecodeError):
         package = "?"
         commit = "invalid"
         repo = f"{OWNER}/{SHARED_REPO_NAME}"
-    return SiblingInfo(path=sibling, package=package, commit=commit, repo=repo)
+        version = None
+    return SiblingInfo(path=sibling, package=package, commit=commit, repo=repo, version=version)
 
 
 def _run_cmd(cmd: Sequence[str], *, cwd: Path) -> subprocess.CompletedProcess[str]:
@@ -264,7 +267,7 @@ def run_status(parent_dir: Path, *, latest: bool = False, only: str | None = Non
             StatusRow(
                 sibling=info.name,
                 package=info.package,
-                commit=info.short_commit,
+                commit=f"{info.short_commit} {info.version}" if info.version else info.short_commit,
                 status=status,
                 ok=ok,
             )

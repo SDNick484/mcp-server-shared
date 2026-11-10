@@ -126,6 +126,20 @@ def test_status_default_and_latest_summary_table(tmp_path: Path, monkeypatch: py
     assert all("--check" in cmd and "--latest" in cmd for _, cmd in recorded)
 
 
+def test_status_shows_the_locks_version_next_to_the_commit(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys):
+    mod = load_script()
+    tagged = make_sibling(tmp_path, "mcp-server-alpha", "alpha_mcp", COMMIT_A)
+    with (tagged / "shared.lock").open("a", encoding="utf-8") as lock:
+        lock.write('version = "v0.1.0"\n')
+    make_sibling(tmp_path, "mcp-server-beta", "beta_mcp", COMMIT_B)
+    ok = subprocess.CompletedProcess([], 0, stdout="", stderr="")
+    monkeypatch.setattr(mod, "_run_cmd", lambda cmd, *, cwd: ok)
+    assert mod.main(["status", "--parent-dir", str(tmp_path)]) == 0
+    rows = {line.split()[0]: line for line in capsys.readouterr().out.splitlines()[2:]}
+    assert f"{COMMIT_A[:7]} v0.1.0" in rows["mcp-server-alpha"]
+    assert "v0." not in rows["mcp-server-beta"]
+
+
 def test_status_reports_error_on_invalid_lock(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys):
     mod = load_script()
     bad = tmp_path / "mcp-server-broken"

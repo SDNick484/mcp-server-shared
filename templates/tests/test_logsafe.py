@@ -204,7 +204,7 @@ def test_mask_email():
     ("line", "expected"),
     [
         ("denied: user@example.com", "denied: u***@example.com"),
-        ("from=first.last+tag@mail.example.co.uk,", "from=f***@mail.example.co.uk,"),
+        ("from=first.last+tag@mail.example.org,", "from=f***@mail.example.org,"),
         ("<User_1@Example.COM>", "<U***@Example.COM>"),
         ("send to user@example.com.", "send to u***@example.com."),
         ("user@example.com: not allowed", "u***@example.com: not allowed"),
@@ -289,7 +289,7 @@ if hypothesis is not None:
     @hypothesis.given(st.ip_addresses(v=6), st.text(alphabet="abcxyz ,.;", max_size=8))
     def test_no_ipv6_survives_redact(ip, around):
         hypothesis.assume(not (ip.is_loopback or ip.is_unspecified))
-        # A dotted tail of 0.x or 127.x ("::ffff:0.0.0.1") is kept on purpose, as the bare 0.x and
+        # A dotted tail of 0.x or 127.x ("::ffff:127.0.0.1") is kept on purpose, as the bare 0.x and
         # 127.x addresses are (test_no_ipv4_survives_redact makes the same assumption).
         hypothesis.assume(not str(ip).rsplit(":", 1)[1].startswith(("127.", "0.")))
         assert str(ip) not in redact(f"{around} {ip} {around}")

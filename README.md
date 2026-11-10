@@ -220,7 +220,8 @@ jobs:
 It checks out the caller and runs the caller's own `sync_shared.py --check`, plus `--check --latest`
 on `schedule`/`workflow_dispatch` (or with `latest: true`). Read-only token, SHA-pinned actions,
 `timeout-minutes`, and a job-level `concurrency` group (a called workflow sharing the caller's
-workflow-level group deadlocks, since `github.workflow` there is the caller's name).
+workflow-level group deadlocks, since `github.workflow` there is the caller's name). The group is
+per event and only PR runs cancel, so a push to `main` can't cancel the weekly `--latest` check.
 
 The alternative was to make the workflow a synced file, like the modules. Why not:
 

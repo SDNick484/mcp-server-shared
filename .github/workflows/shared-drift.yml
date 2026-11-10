@@ -36,10 +36,11 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     # Job-level, with its own suffix: in a called workflow github.workflow is the *caller's* name,
-    # and a group equal to the caller's own workflow-level group deadlocks the run.
+    # and a group equal to the caller's own workflow-level group deadlocks the run. The event is in
+    # the group, and only PR runs cancel: a push to main must not cancel the weekly --latest check.
     concurrency:
-      group: ${{ github.workflow }}-${{ github.ref }}-shared-drift
-      cancel-in-progress: true
+      group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}-shared-drift
+      cancel-in-progress: ${{ github.event_name == 'pull_request' }}
     env:
       GITHUB_TOKEN: ${{ github.token }}  # for api.github.com's rate limit; raw files are fetched without it
     steps:

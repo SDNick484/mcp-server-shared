@@ -410,6 +410,7 @@ def test_update_pr_opens_a_pr_only_for_siblings_that_pass(tmp_path: Path, portfo
     beta = make_git_sibling(tmp_path, "mcp-server-beta", "beta_mcp")  # fails ruff check
     make_git_sibling(tmp_path, "mcp-server-gamma", "gamma_mcp")  # this sync's PR already open
     delta = make_git_sibling(tmp_path, "mcp-server-delta", "delta_mcp")  # someone's work in progress
+    git(alpha, "config", "user.name", "Real Name")  # a developer's identity must not reach the commit
     tools.failing["mcp-server-beta"] = "ruff check"
     branch = f"sync-shared-{COMMIT_B[:7]}"
     gh.open[("mcp-server-gamma", branch)] = "https://github.example/mcp-server-gamma/pull/7"
@@ -422,8 +423,8 @@ def test_update_pr_opens_a_pr_only_for_siblings_that_pass(tmp_path: Path, portfo
     assert remote_branches(tmp_path, "mcp-server-alpha") == ["main", branch]
     remote = tmp_path / "remotes" / "mcp-server-alpha.git"
     assert (
-        git(remote, "log", "-1", "--format=%s|%ae", branch).strip()
-        == f"Sync shared to {COMMIT_B[:7]}|{mod.COMMIT_EMAIL}"
+        git(remote, "log", "-1", "--format=%s|%an|%ae|%cn|%ce", branch).strip()
+        == f"Sync shared to {COMMIT_B[:7]}|{mod.OWNER}|{mod.COMMIT_EMAIL}|{mod.OWNER}|{mod.COMMIT_EMAIL}"
     )
     assert git(remote, "log", "-1", "--format=%s", "main").strip() == "initial"
     assert git(alpha, "branch", "--show-current").strip() == "main"

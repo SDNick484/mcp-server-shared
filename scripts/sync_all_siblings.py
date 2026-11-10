@@ -36,8 +36,9 @@ OWN_SYNC_SCRIPT = REPO_ROOT / "scripts" / "sync_shared.py"
 SHARED_REPO_NAME = "mcp-server-shared"
 LOCK_FILE = "shared.lock"
 
-# The GitHub account the siblings live under. Its noreply address is the commit e-mail
-# the portfolio uses, so sync commits carry it whatever the local git config says.
+# The GitHub account the siblings live under. Sync commits are authored as the account and
+# its noreply address, whatever the local git config says: the siblings are public, and a
+# real name in a commit is as public as one in a file (a sibling's privacy scan checks both).
 OWNER = "SDNick484"
 COMMIT_EMAIL = f"{OWNER}@users.noreply.github.com"
 SSH_REMOTE_BASE = f"git@github.com:{OWNER}"
@@ -470,13 +471,13 @@ def pr_body(info: SiblingInfo, new_commit: str, checks: str, paths: Sequence[str
     )
 
 
-def _commit_env(repo: Path) -> dict[str, str]:
-    env = {"GIT_AUTHOR_EMAIL": COMMIT_EMAIL, "GIT_COMMITTER_EMAIL": COMMIT_EMAIL}
-    try:
-        _git(repo, "config", "user.name")
-    except GitError:
-        env |= {"GIT_AUTHOR_NAME": OWNER, "GIT_COMMITTER_NAME": OWNER}
-    return env
+def _commit_env() -> dict[str, str]:
+    return {
+        "GIT_AUTHOR_NAME": OWNER,
+        "GIT_AUTHOR_EMAIL": COMMIT_EMAIL,
+        "GIT_COMMITTER_NAME": OWNER,
+        "GIT_COMMITTER_EMAIL": COMMIT_EMAIL,
+    }
 
 
 def release_sibling(
@@ -558,7 +559,7 @@ def release_sibling(
         subject = SYNC_SUBJECT_PREFIX + new[:7]
         body = f"shared.lock: {info.short_commit} -> {new[:7]} (scripts/sync_shared.py --update)\n\n"
         body += "\n".join(f"- {p}" for p in paths)
-        _git(sibling, "commit", "--quiet", "-m", subject, "-m", body, env=_commit_env(sibling))
+        _git(sibling, "commit", "--quiet", "-m", subject, "-m", body, env=_commit_env())
     except GitError as exc:
         if branch != default:
             _git(sibling, "switch", "--quiet", default)  # the uncommitted changes come along

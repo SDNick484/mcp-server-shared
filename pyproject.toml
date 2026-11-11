@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools>=68"]
+requires = ["setuptools>=77"]  # 77: SPDX `license` strings (PEP 639)
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -7,7 +7,8 @@ name = "mcp-server-shared"
 version = "0.1.0"
 description = "The code the sibling MCP servers share (remote.py, logsafe.py, tasks.py), its tests, and the script that syncs them"
 readme = "README.md"
-license = { text = "MIT" }
+license = "MIT"
+license-files = ["LICENSE"]
 authors = [{ name = "Nicholas E. Andrade" }]
 requires-python = ">=3.11"
 # What the shared modules need. Each sibling already depends on these; keep the

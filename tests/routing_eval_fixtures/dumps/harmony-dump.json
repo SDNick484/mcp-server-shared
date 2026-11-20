@@ -1,0 +1,40 @@
+{
+ "_meta": {
+  "captured_at": "2026-01-01T00:00:00+00:00",
+  "note": "A fictional dump in the shape of `mcp-server-harmony doctor --dump`; every name is a placeholder."
+ },
+ "name": "hub-1",
+ "current_activity": 1001,
+ "config": {
+  "activity": [
+   {
+    "id": "-1",
+    "label": "PowerOff",
+    "fixit": {}
+   },
+   {
+    "id": "1001",
+    "label": "Watch Console",
+    "fixit": {
+     "2001": {"id": "2001", "Power": "On"},
+     "2002": {"id": "2002", "Power": "On", "Input": "HDMI 2", "isRelativePower": true},
+     "2003": {"id": "2003", "Power": "Off"}
+    }
+   },
+   {
+    "id": "1002",
+    "label": "Watch Streamer",
+    "fixit": {
+     "2001": {"id": "2001", "Power": "On", "Input": "HDMI 1"},
+     "2002": {"id": "2002", "Power": "On", "Input": "HDMI 3"},
+     "2003": {"id": "2003", "isManualPower": true}
+    }
+   }
+  ],
+  "device": [
+   {"id": "2001", "label": "Device A", "type": "Television", "isManualPower": "false"},
+   {"id": "2002", "label": "Device B", "type": "AVReceiver", "isManualPower": "false"},
+   {"id": "2003", "label": "Device C", "type": "Amplifier", "isManualPower": "true"}
+  ]
+ }
+}

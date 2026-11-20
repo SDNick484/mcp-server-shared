@@ -1,0 +1,736 @@
+{
+  "commit": "a5b8739b5ea6973f8b359f2575ae8db3f86570a6",
+  "instructions": "Physical role: Media Source. Connects into Onkyo AVR input 'strm-box' (which routes video downstream to the TV display and plays master audio). Controls an NVIDIA Shield TV over the Android TV Remote protocol. Call shield_get_status first to see whether it is on and what app is in the foreground, and shield_get_now_playing for the title and play state. The Shield must have been paired once with `mcp-server-shieldtv pair`.",
+  "package": "shieldtv_mcp",
+  "server": "shieldtv",
+  "tools": [
+    {
+      "annotations": {
+        "openWorldHint": false,
+        "readOnlyHint": true
+      },
+      "description": "Report what is playing: app, title, subtitle (artist or channel), play state, position in seconds.\n\n<use_case>\nRetrieve playback metadata and playback state of media currently active on the Shield.\n</use_case>\n\n<important_notes>\n- Requires ADB connection established via `mcp-server-shieldtv adb-setup`.\n- position_s is null for live streaming TV.\n</important_notes>\n",
+      "inputSchema": {
+        "properties": {},
+        "title": "shield_get_now_playingArguments",
+        "type": "object"
+      },
+      "name": "shield_get_now_playing",
+      "outputSchema": {
+        "properties": {
+          "app": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "App"
+          },
+          "app_package": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "App Package"
+          },
+          "position_s": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Position S"
+          },
+          "state": {
+            "enum": [
+              "playing",
+              "paused",
+              "buffering",
+              "stopped",
+              "other",
+              "idle"
+            ],
+            "title": "State",
+            "type": "string"
+          },
+          "subtitle": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Subtitle"
+          },
+          "title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Title"
+          }
+        },
+        "required": [
+          "state",
+          "app_package",
+          "app",
+          "title",
+          "subtitle",
+          "position_s"
+        ],
+        "title": "NowPlaying",
+        "type": "object"
+      }
+    },
+    {
+      "annotations": {
+        "openWorldHint": false,
+        "readOnlyHint": true
+      },
+      "description": "List the Shield's Bluetooth remotes (e.g. a Harmony hub) and whether each works.\n\n<use_case>\nDiagnose unresponsive physical or hub remotes paired to the Shield over Bluetooth.\n</use_case>\n\n<important_notes>\n- Requires ADB connection (`mcp-server-shieldtv adb-setup`).\n- Reports \"stuck\" state when a connected remote stops sending button events (common after sleep/reboot).\n</important_notes>\n",
+      "inputSchema": {
+        "properties": {},
+        "title": "shield_get_remotesArguments",
+        "type": "object"
+      },
+      "name": "shield_get_remotes",
+      "outputSchema": {
+        "$defs": {
+          "Remote": {
+            "properties": {
+              "address": {
+                "title": "Address",
+                "type": "string"
+              },
+              "name": {
+                "title": "Name",
+                "type": "string"
+              },
+              "state": {
+                "enum": [
+                  "working",
+                  "stuck",
+                  "connecting",
+                  "disconnected"
+                ],
+                "title": "State",
+                "type": "string"
+              }
+            },
+            "required": [
+              "name",
+              "address",
+              "state"
+            ],
+            "title": "Remote",
+            "type": "object"
+          }
+        },
+        "properties": {
+          "advice": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Advice"
+          },
+          "remotes": {
+            "items": {
+              "$ref": "#/$defs/Remote"
+            },
+            "title": "Remotes",
+            "type": "array"
+          }
+        },
+        "required": [
+          "remotes",
+          "advice"
+        ],
+        "title": "RemotesReport",
+        "type": "object"
+      }
+    },
+    {
+      "annotations": {
+        "openWorldHint": false,
+        "readOnlyHint": true
+      },
+      "description": "Start here. Query Shield TV power state, reachability, foreground app, and volume.\n\n<use_case>\nInspect Shield TV power, connectivity, active foreground package, and volume before issuing commands.\n</use_case>\n\n<important_notes>\n- When unreachable, stale is true and values represent last known state.\n- Video output routes to the Onkyo AVR input 'strm-box'.\n</important_notes>\n",
+      "inputSchema": {
+        "properties": {},
+        "title": "shield_get_statusArguments",
+        "type": "object"
+      },
+      "name": "shield_get_status",
+      "outputSchema": {
+        "$defs": {
+          "Device": {
+            "properties": {
+              "manufacturer": {
+                "title": "Manufacturer",
+                "type": "string"
+              },
+              "model": {
+                "title": "Model",
+                "type": "string"
+              },
+              "sw_version": {
+                "title": "Sw Version",
+                "type": "string"
+              }
+            },
+            "required": [
+              "manufacturer",
+              "model",
+              "sw_version"
+            ],
+            "title": "Device",
+            "type": "object"
+          },
+          "Volume": {
+            "properties": {
+              "level": {
+                "title": "Level",
+                "type": "integer"
+              },
+              "max": {
+                "title": "Max",
+                "type": "integer"
+              },
+              "muted": {
+                "title": "Muted",
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "level",
+              "max",
+              "muted"
+            ],
+            "title": "Volume",
+            "type": "object"
+          }
+        },
+        "properties": {
+          "as_of": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "As Of"
+          },
+          "current_app": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Current App"
+          },
+          "current_app_package": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Current App Package"
+          },
+          "device": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/Device"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "dry_run": {
+            "title": "Dry Run",
+            "type": "boolean"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          },
+          "host": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Host"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          },
+          "paired": {
+            "title": "Paired",
+            "type": "boolean"
+          },
+          "power": {
+            "anyOf": [
+              {
+                "enum": [
+                  "on",
+                  "standby"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Power"
+          },
+          "reachable": {
+            "title": "Reachable",
+            "type": "boolean"
+          },
+          "stale": {
+            "title": "Stale",
+            "type": "boolean"
+          },
+          "volume": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/Volume"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "host",
+          "name",
+          "paired",
+          "dry_run",
+          "reachable",
+          "stale",
+          "as_of",
+          "error",
+          "power",
+          "current_app_package",
+          "current_app",
+          "volume",
+          "device"
+        ],
+        "title": "Status",
+        "type": "object"
+      }
+    },
+    {
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false,
+        "readOnlyHint": false
+      },
+      "description": "Launch an application on the Shield TV.\n\n<use_case>\nLaunch streaming media apps (e.g. Netflix, YouTube, Plex) by friendly name.\n</use_case>\n\n<important_notes>\n- Video output requires Onkyo AVR input set to 'strm-box' and TV input set to AVR HDMI port.\n- Confirms that the application is running in the foreground before returning.\n- Unknown app names suggest closest matches from configured apps.\n</important_notes>\n",
+      "inputSchema": {
+        "properties": {
+          "app": {
+            "description": "Friendly app name from shield_list_apps, e.g. 'netflix'.",
+            "title": "App",
+            "type": "string"
+          }
+        },
+        "required": [
+          "app"
+        ],
+        "title": "shield_launch_appArguments",
+        "type": "object"
+      },
+      "name": "shield_launch_app",
+      "outputSchema": {
+        "properties": {
+          "detail": {
+            "title": "Detail",
+            "type": "string"
+          },
+          "outcome": {
+            "enum": [
+              "done",
+              "unchanged",
+              "dry_run"
+            ],
+            "title": "Outcome",
+            "type": "string"
+          },
+          "sent": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Sent",
+            "type": "array"
+          },
+          "shield": {
+            "title": "Shield",
+            "type": "string"
+          },
+          "warnings": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Warnings",
+            "type": "array"
+          }
+        },
+        "required": [
+          "shield",
+          "outcome",
+          "detail",
+          "sent",
+          "warnings"
+        ],
+        "title": "ActionResult",
+        "type": "object"
+      }
+    },
+    {
+      "annotations": {
+        "openWorldHint": false,
+        "readOnlyHint": true
+      },
+      "description": "List the app names launch_app accepts (friendly name -> the link it opens).\n\n<use_case>\nDiscover valid app names for use with `shield_launch_app`.\n</use_case>\n\n<important_notes>\n- Returns mapped friendly names from configuration.\n</important_notes>\n",
+      "inputSchema": {
+        "properties": {},
+        "title": "shield_list_appsArguments",
+        "type": "object"
+      },
+      "name": "shield_list_apps",
+      "outputSchema": {
+        "additionalProperties": {
+          "type": "string"
+        },
+        "title": "shield_list_appsDictOutput",
+        "type": "object"
+      }
+    },
+    {
+      "annotations": {
+        "destructiveHint": true,
+        "idempotentHint": false,
+        "openWorldHint": false,
+        "readOnlyHint": false
+      },
+      "description": "Restart the Shield TV.\n\n<use_case>\nReboot the device when software is unresponsive or remotes require a cold reset.\n</use_case>\n\n<important_notes>\n- Disruptive: stops active playback and disconnects network services.\n- Rate limited to 1 reboot per 120s to prevent rapid boot loops.\n- Requires ADB connection (`mcp-server-shieldtv adb-setup`).\n</important_notes>\n",
+      "inputSchema": {
+        "properties": {},
+        "title": "shield_rebootArguments",
+        "type": "object"
+      },
+      "name": "shield_reboot",
+      "outputSchema": {
+        "$defs": {
+          "Remote": {
+            "properties": {
+              "address": {
+                "title": "Address",
+                "type": "string"
+              },
+              "name": {
+                "title": "Name",
+                "type": "string"
+              },
+              "state": {
+                "enum": [
+                  "working",
+                  "stuck",
+                  "connecting",
+                  "disconnected"
+                ],
+                "title": "State",
+                "type": "string"
+              }
+            },
+            "required": [
+              "name",
+              "address",
+              "state"
+            ],
+            "title": "Remote",
+            "type": "object"
+          }
+        },
+        "properties": {
+          "advice": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Advice"
+          },
+          "back_after_s": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Back After S"
+          },
+          "detail": {
+            "title": "Detail",
+            "type": "string"
+          },
+          "outcome": {
+            "enum": [
+              "done",
+              "dry_run"
+            ],
+            "title": "Outcome",
+            "type": "string"
+          },
+          "remotes": {
+            "items": {
+              "$ref": "#/$defs/Remote"
+            },
+            "title": "Remotes",
+            "type": "array"
+          },
+          "sent": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Sent",
+            "type": "array"
+          }
+        },
+        "required": [
+          "outcome",
+          "detail",
+          "sent",
+          "back_after_s",
+          "remotes",
+          "advice"
+        ],
+        "title": "RebootResult",
+        "type": "object"
+      }
+    },
+    {
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": false,
+        "readOnlyHint": false
+      },
+      "description": "Press a remote-control key on the Shield, e.g. DPAD_DOWN with repeat=3 to move down three rows.\n\n<use_case>\nNavigate Android TV interfaces, menus, and controls using directional pad, enter, back, and home.\n</use_case>\n\n<important_notes>\n- Only sends allowed key enum values; power toggles and raw text typing are not supported.\n- VOLUME_UP is capped at 20 presses in any 5 minutes; to set a level, use the receiver's or TV's volume tool.\n</important_notes>\n",
+      "inputSchema": {
+        "properties": {
+          "key": {
+            "enum": [
+              "HOME",
+              "BACK",
+              "MENU",
+              "DPAD_UP",
+              "DPAD_DOWN",
+              "DPAD_LEFT",
+              "DPAD_RIGHT",
+              "DPAD_CENTER",
+              "MEDIA_PLAY_PAUSE",
+              "MEDIA_PLAY",
+              "MEDIA_PAUSE",
+              "MEDIA_STOP",
+              "MEDIA_NEXT",
+              "MEDIA_PREVIOUS",
+              "MEDIA_REWIND",
+              "MEDIA_FAST_FORWARD",
+              "VOLUME_UP",
+              "VOLUME_DOWN",
+              "VOLUME_MUTE"
+            ],
+            "title": "Key",
+            "type": "string"
+          },
+          "repeat": {
+            "default": 1,
+            "description": "How many times to press the key (1-10).",
+            "maximum": 10,
+            "minimum": 1,
+            "title": "Repeat",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "key"
+        ],
+        "title": "shield_send_keyArguments",
+        "type": "object"
+      },
+      "name": "shield_send_key",
+      "outputSchema": {
+        "properties": {
+          "detail": {
+            "title": "Detail",
+            "type": "string"
+          },
+          "outcome": {
+            "enum": [
+              "done",
+              "unchanged",
+              "dry_run"
+            ],
+            "title": "Outcome",
+            "type": "string"
+          },
+          "sent": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Sent",
+            "type": "array"
+          },
+          "shield": {
+            "title": "Shield",
+            "type": "string"
+          },
+          "warnings": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Warnings",
+            "type": "array"
+          }
+        },
+        "required": [
+          "shield",
+          "outcome",
+          "detail",
+          "sent",
+          "warnings"
+        ],
+        "title": "ActionResult",
+        "type": "object"
+      }
+    },
+    {
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false,
+        "readOnlyHint": false
+      },
+      "description": "Wake the Shield ('on') or put it to sleep ('off').\n\n<use_case>\nManage device power state.\n</use_case>\n\n<important_notes>\n- Uses discrete WAKEUP and SLEEP commands rather than ambiguous toggles.\n- Idempotent: returns 'unchanged' if already in requested state.\n</important_notes>\n",
+      "inputSchema": {
+        "properties": {
+          "state": {
+            "enum": [
+              "on",
+              "off"
+            ],
+            "title": "State",
+            "type": "string"
+          }
+        },
+        "required": [
+          "state"
+        ],
+        "title": "shield_set_powerArguments",
+        "type": "object"
+      },
+      "name": "shield_set_power",
+      "outputSchema": {
+        "properties": {
+          "detail": {
+            "title": "Detail",
+            "type": "string"
+          },
+          "outcome": {
+            "enum": [
+              "done",
+              "unchanged",
+              "dry_run"
+            ],
+            "title": "Outcome",
+            "type": "string"
+          },
+          "sent": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Sent",
+            "type": "array"
+          },
+          "shield": {
+            "title": "Shield",
+            "type": "string"
+          },
+          "warnings": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Warnings",
+            "type": "array"
+          }
+        },
+        "required": [
+          "shield",
+          "outcome",
+          "detail",
+          "sent",
+          "warnings"
+        ],
+        "title": "ActionResult",
+        "type": "object"
+      }
+    }
+  ]
+}

@@ -1,0 +1,1790 @@
+{
+  "commit": "85f698338ad36ae45a86270a8c75c8a29c191cdc",
+  "instructions": "Controls a Pixelcade LED marquee (128x32 or 128x64 pixels) on an arcade cabinet, and optional Pixelcade Pulse LED strips, speaker rings, and matrices through Pixelcade's pixelweb REST API.\n\nEcosystem Signal Chain & Topology:\n- Video / Gaming: Batocera Linux or MiSTer FPGA drives the cabinet monitor and audio.\n- Marquee Display: Pixelcade acts as the dynamic auxiliary display. When games launch in Batocera or MiSTer, marquee artwork is updated to reflect the active title.\n- Lighting & Pulse: Pixelcade Pulse coordinates ambient cabinet lighting and underglow effects.\n- Call pixelcade_get_status first to check connectivity, active game, and Pulse hardware availability.\n\nUsage Guidelines:\n- The arcade frontend (e.g., EmulationStation on Batocera) also drives the marquee: scrolling or launching a game replaces custom marquees and stops widgets.\n- Use pixelcade_show_current_game to restore the frontend's marquee or pixelcade_show_default_marquee for the fallback.\n- While screensavers or locked widgets run (lock=True), call pixelcade_stop_widgets to release attract mode.",
+  "package": "pixelcade_mcp",
+  "server": "pixelcade",
+  "tools": [
+    {
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false,
+        "readOnlyHint": false
+      },
+      "description": "<use_case>\nTurn the LED marquee display black.\n</use_case>\n\n<important_notes>\n- The display remains powered on in standby; next command will render immediately.\n- Does not affect Pulse LED strips (use pixelcade_pulse_clear for lighting).\n</important_notes>\n",
+      "inputSchema": {
+        "properties": {},
+        "title": "pixelcade_blank_displayArguments",
+        "type": "object"
+      },
+      "name": "pixelcade_blank_display",
+      "outputSchema": {
+        "properties": {
+          "detail": {
+            "title": "Detail",
+            "type": "string"
+          },
+          "outcome": {
+            "enum": [
+              "done",
+              "unchanged",
+              "dry_run"
+            ],
+            "title": "Outcome",
+            "type": "string"
+          },
+          "pixelcade": {
+            "title": "Pixelcade",
+            "type": "string"
+          },
+          "sent": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Sent",
+            "type": "array"
+          },
+          "warnings": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Warnings",
+            "type": "array"
+          }
+        },
+        "required": [
+          "pixelcade",
+          "outcome",
+          "detail",
+          "sent",
+          "warnings"
+        ],
+        "title": "ActionResult",
+        "type": "object"
+      }
+    },
+    {
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false,
+        "readOnlyHint": false
+      },
+      "description": "<use_case>\nClear the marquee queue: stop queued items that are playing and drop pending queue items.\n</use_case>\n\n<important_notes>\n- Uses attract stop command, so also halts active widgets or attract-mode locks.\n- If restore_current is True (default), restores the frontend's active game/system marquee.\n</important_notes>\n",
+      "inputSchema": {
+        "properties": {
+          "restore_current": {
+            "default": true,
+            "description": "Afterwards, put back the frontend's marquee (the default). False leaves the marquee as the queue clear left it.",
+            "title": "Restore Current",
+            "type": "boolean"
+          }
+        },
+        "title": "pixelcade_clear_queueArguments",
+        "type": "object"
+      },
+      "name": "pixelcade_clear_queue",
+      "outputSchema": {
+        "properties": {
+          "detail": {
+            "title": "Detail",
+            "type": "string"
+          },
+          "outcome": {
+            "enum": [
+              "done",
+              "unchanged",
+              "dry_run"
+            ],
+            "title": "Outcome",
+            "type": "string"
+          },
+          "pixelcade": {
+            "title": "Pixelcade",
+            "type": "string"
+          },
+          "sent": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Sent",
+            "type": "array"
+          },
+          "warnings": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Warnings",
+            "type": "array"
+          }
+        },
+        "required": [
+          "pixelcade",
+          "outcome",
+          "detail",
+          "sent",
+          "warnings"
+        ],
+        "title": "ActionResult",
+        "type": "object"
+      }
+    },
+    {
+      "annotations": {
+        "openWorldHint": false,
+        "readOnlyHint": true
+      },
+      "description": "<use_case>\nReport whether the Pixelcade marquee and Pulse lighting controller are reachable,\nsoftware and firmware versions, the game or system marquee last shown by the frontend,\nand Pulse LED strip state.\n</use_case>\n\n<important_notes>\n- Always call this tool first before sending marquee displays or Pulse commands.\n- When reachable is False, error explains why (e.g. host powered down or network timeout).\n- pulse.responding is False when strips are configured but disconnected or unpowered.\n</important_notes>\n",
+      "inputSchema": {
+        "properties": {},
+        "title": "pixelcade_get_statusArguments",
+        "type": "object"
+      },
+      "name": "pixelcade_get_status",
+      "outputSchema": {
+        "$defs": {
+          "CurrentGame": {
+            "properties": {
+              "rom": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Rom"
+              },
+              "system": {
+                "title": "System",
+                "type": "string"
+              }
+            },
+            "required": [
+              "system",
+              "rom"
+            ],
+            "title": "CurrentGame",
+            "type": "object"
+          },
+          "Pulse": {
+            "properties": {
+              "brightness": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Brightness"
+              },
+              "enabled": {
+                "anyOf": [
+                  {
+                    "type": "boolean"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Enabled"
+              },
+              "max_brightness": {
+                "title": "Max Brightness",
+                "type": "integer"
+              },
+              "pixels": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Pixels"
+              },
+              "responding": {
+                "anyOf": [
+                  {
+                    "type": "boolean"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Responding"
+              },
+              "supported": {
+                "anyOf": [
+                  {
+                    "type": "boolean"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Supported"
+              }
+            },
+            "required": [
+              "supported",
+              "enabled",
+              "pixels",
+              "brightness",
+              "max_brightness",
+              "responding"
+            ],
+            "title": "Pulse",
+            "type": "object"
+          }
+        },
+        "properties": {
+          "animated_marquees": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Animated Marquees"
+          },
+          "current_game": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/CurrentGame"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "dry_run": {
+            "title": "Dry Run",
+            "type": "boolean"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          },
+          "firmware": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Firmware"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          },
+          "pulse": {
+            "$ref": "#/$defs/Pulse"
+          },
+          "reachable": {
+            "title": "Reachable",
+            "type": "boolean"
+          },
+          "resolution": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Resolution"
+          },
+          "software_version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Software Version"
+          },
+          "type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Type"
+          },
+          "url": {
+            "title": "Url",
+            "type": "string"
+          },
+          "v2_board": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "V2 Board"
+          }
+        },
+        "required": [
+          "url",
+          "dry_run",
+          "reachable",
+          "error",
+          "name",
+          "type",
+          "resolution",
+          "v2_board",
+          "firmware",
+          "software_version",
+          "current_game",
+          "pulse",
+          "animated_marquees"
+        ],
+        "title": "Status",
+        "type": "object"
+      }
+    },
+    {
+      "annotations": {
+        "openWorldHint": false,
+        "readOnlyHint": true
+      },
+      "description": "<use_case>\nList available marquee artwork in a folder, indicating whether still (PNG/JPG) or animated (GIF) versions exist.\n</use_case>\n\n<important_notes>\n- folder is typically a system name ('mame', 'snes', 'nes', 'neogeo', 'genesis') or 'console', 'animations', 'user'.\n- Artwork names can be passed as the rom parameter to pixelcade_show_game_marquee.\n- Use contains to filter titles and reduce payload size.\n</important_notes>\n",
+      "inputSchema": {
+        "properties": {
+          "contains": {
+            "anyOf": [
+              {
+                "maxLength": 60,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Case-insensitive substring filter, best matches first.",
+            "title": "Contains"
+          },
+          "folder": {
+            "description": "A Batocera system (mame, snes, nes, neogeo, ...) for its games' marquees; 'console' for system marquees; 'animations' for play_animation names; 'user' for the user's own uploads.",
+            "maxLength": 60,
+            "minLength": 1,
+            "title": "Folder",
+            "type": "string"
+          },
+          "kind": {
+            "default": "any",
+            "description": "any, or only names that have a still (PNG/JPG) or an animated (GIF) version.",
+            "enum": [
+              "any",
+              "still",
+              "animated"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "limit": {
+            "default": 100,
+            "description": "Maximum names to return.",
+            "maximum": 500,
+            "minimum": 1,
+            "title": "Limit",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "folder"
+        ],
+        "title": "pixelcade_list_artworkArguments",
+        "type": "object"
+      },
+      "name": "pixelcade_list_artwork",
+      "outputSchema": {
+        "$defs": {
+          "Artwork": {
+            "properties": {
+              "animated": {
+                "title": "Animated",
+                "type": "boolean"
+              },
+              "name": {
+                "title": "Name",
+                "type": "string"
+              },
+              "still": {
+                "title": "Still",
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "name",
+              "still",
+              "animated"
+            ],
+            "title": "Artwork",
+            "type": "object"
+          }
+        },
+        "properties": {
+          "artwork": {
+            "items": {
+              "$ref": "#/$defs/Artwork"
+            },
+            "title": "Artwork",
+            "type": "array"
+          },
+          "folder": {
+            "title": "Folder",
+            "type": "string"
+          },
+          "matches": {
+            "title": "Matches",
+            "type": "integer"
+          },
+          "total": {
+            "title": "Total",
+            "type": "integer"
+          },
+          "truncated": {
+            "title": "Truncated",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "folder",
+          "total",
+          "matches",
+          "artwork",
+          "truncated"
+        ],
+        "title": "ArtworkList",
+        "type": "object"
+      }
+    },
+    {
+      "annotations": {
+        "openWorldHint": false,
+        "readOnlyHint": true
+      },
+      "description": "<use_case>\nList available Pixelcade Pulse lighting effect names by category, along with name patterns and named zones.\n</use_case>\n\n<important_notes>\n- Does not require active hardware or network communication.\n- matrix_* effects target 8x8/8x32 LED matrices; other effects target strips and speaker rings.\n</important_notes>\n",
+      "inputSchema": {
+        "properties": {
+          "category": {
+            "anyOf": [
+              {
+                "enum": [
+                  "basic",
+                  "advanced",
+                  "explosions",
+                  "holiday",
+                  "gun",
+                  "racing",
+                  "ambient",
+                  "matrix",
+                  "matrix_explosions",
+                  "matrix_gun",
+                  "matrix_pulse",
+                  "matrix_energy",
+                  "achievements"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Only this category; omit for all.",
+            "title": "Category"
+          }
+        },
+        "title": "pixelcade_list_pulse_effectsArguments",
+        "type": "object"
+      },
+      "name": "pixelcade_list_pulse_effects",
+      "outputSchema": {
+        "properties": {
+          "effects": {
+            "additionalProperties": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "title": "Effects",
+            "type": "object"
+          },
+          "patterns": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "title": "Patterns",
+            "type": "object"
+          },
+          "zones": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Zones",
+            "type": "array"
+          }
+        },
+        "required": [
+          "effects",
+          "patterns",
+          "zones"
+        ],
+        "title": "EffectCatalog",
+        "type": "object"
+      }
+    },
+    {
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": false,
+        "readOnlyHint": false
+      },
+      "description": "<use_case>\nPlay a built-in Pixelcade animation sequence on the marquee.\n</use_case>\n\n<important_notes>\n- Animation names can be discovered via pixelcade_list_artwork(folder='animations').\n- loops sets how many times the animation plays before completing.\n</important_notes>\n",
+      "inputSchema": {
+        "properties": {
+          "loops": {
+            "anyOf": [
+              {
+                "maximum": 50,
+                "minimum": 1,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Queue it and play this many times; omit to play now.",
+            "title": "Loops"
+          },
+          "name": {
+            "description": "An animation name from list_artwork folder='animations'.",
+            "maxLength": 100,
+            "minLength": 1,
+            "title": "Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "title": "pixelcade_play_animationArguments",
+        "type": "object"
+      },
+      "name": "pixelcade_play_animation",
+      "outputSchema": {
+        "properties": {
+          "detail": {
+            "title": "Detail",
+            "type": "string"
+          },
+          "outcome": {
+            "enum": [
+              "done",
+              "unchanged",
+              "dry_run"
+            ],
+            "title": "Outcome",
+            "type": "string"
+          },
+          "pixelcade": {
+            "title": "Pixelcade",
+            "type": "string"
+          },
+          "sent": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Sent",
+            "type": "array"
+          },
+          "warnings": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Warnings",
+            "type": "array"
+          }
+        },
+        "required": [
+          "pixelcade",
+          "outcome",
+          "detail",
+          "sent",
+          "warnings"
+        ],
+        "title": "ActionResult",
+        "type": "object"
+      }
+    },
+    {
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false,
+        "readOnlyHint": false
+      },
+      "description": "<use_case>\nTurn off Pulse LEDs and stop active lighting effects in one zone or across all zones.\n</use_case>\n\n<important_notes>\n- Omit zone parameter to turn off all Pulse lighting strips, rings, and matrices simultaneously.\n</important_notes>\n",
+      "inputSchema": {
+        "properties": {
+          "zone": {
+            "anyOf": [
+              {
+                "maxLength": 20,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "One zone; omit for all LEDs.",
+            "title": "Zone"
+          }
+        },
+        "title": "pixelcade_pulse_clearArguments",
+        "type": "object"
+      },
+      "name": "pixelcade_pulse_clear",
+      "outputSchema": {
+        "properties": {
+          "detail": {
+            "title": "Detail",
+            "type": "string"
+          },
+          "outcome": {
+            "enum": [
+              "done",
+              "unchanged",
+              "dry_run"
+            ],
+            "title": "Outcome",
+            "type": "string"
+          },
+          "pixelcade": {
+            "title": "Pixelcade",
+            "type": "string"
+          },
+          "sent": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Sent",
+            "type": "array"
+          },
+          "warnings": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Warnings",
+            "type": "array"
+          }
+        },
+        "required": [
+          "pixelcade",
+          "outcome",
+          "detail",
+          "sent",
+          "warnings"
+        ],
+        "title": "ActionResult",
+        "type": "object"
+      }
+    },
+    {
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": false,
+        "readOnlyHint": false
+      },
+      "description": "<use_case>\nRun a dynamic lighting effect on a designated Pixelcade Pulse zone (strips, speaker rings, matrices).\n</use_case>\n\n<important_notes>\n- Rate limited to protect power supply and thermal dissipation.\n- Intensity is capped by the server's pulse_max_brightness setting.\n- Discover valid effect names with pixelcade_list_pulse_effects.\n</important_notes>\n",
+      "inputSchema": {
+        "properties": {
+          "color": {
+            "anyOf": [
+              {
+                "maxLength": 7,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "A color name (red, blue, cyan, gray, darkgray, green, lightgray, magenta, orange, yellow, pink, white) or 6-digit hex like 'ff6d00'.",
+            "title": "Color"
+          },
+          "color2": {
+            "anyOf": [
+              {
+                "maxLength": 7,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "A color name (red, blue, cyan, gray, darkgray, green, lightgray, magenta, orange, yellow, pink, white) or 6-digit hex like 'ff6d00'.",
+            "title": "Color2"
+          },
+          "duration_s": {
+            "anyOf": [
+              {
+                "maximum": 3600,
+                "minimum": 1,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Stop after this long.",
+            "title": "Duration S"
+          },
+          "effect": {
+            "description": "Effect name from list_pulse_effects, e.g. 'rainbow'.",
+            "maxLength": 80,
+            "minLength": 1,
+            "title": "Effect",
+            "type": "string"
+          },
+          "intensity": {
+            "anyOf": [
+              {
+                "maximum": 255,
+                "minimum": 0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Effect brightness 0-255 (capped by the server).",
+            "title": "Intensity"
+          },
+          "loops": {
+            "anyOf": [
+              {
+                "maximum": 100,
+                "minimum": 0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "0 repeats forever.",
+            "title": "Loops"
+          },
+          "reverse": {
+            "default": false,
+            "title": "Reverse",
+            "type": "boolean"
+          },
+          "speed": {
+            "anyOf": [
+              {
+                "maximum": 255,
+                "minimum": 1,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Effect speed 1-255.",
+            "title": "Speed"
+          },
+          "zone": {
+            "description": "A zone name (left_strip, right_strip, left_speaker_ring, right_speaker_ring, center_matrix, left_matrix, right_matrix) or a zone number 0-35.",
+            "maxLength": 20,
+            "minLength": 1,
+            "title": "Zone",
+            "type": "string"
+          }
+        },
+        "required": [
+          "zone",
+          "effect"
+        ],
+        "title": "pixelcade_pulse_effectArguments",
+        "type": "object"
+      },
+      "name": "pixelcade_pulse_effect",
+      "outputSchema": {
+        "properties": {
+          "detail": {
+            "title": "Detail",
+            "type": "string"
+          },
+          "outcome": {
+            "enum": [
+              "done",
+              "unchanged",
+              "dry_run"
+            ],
+            "title": "Outcome",
+            "type": "string"
+          },
+          "pixelcade": {
+            "title": "Pixelcade",
+            "type": "string"
+          },
+          "sent": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Sent",
+            "type": "array"
+          },
+          "warnings": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Warnings",
+            "type": "array"
+          }
+        },
+        "required": [
+          "pixelcade",
+          "outcome",
+          "detail",
+          "sent",
+          "warnings"
+        ],
+        "title": "ActionResult",
+        "type": "object"
+      }
+    },
+    {
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false,
+        "readOnlyHint": false
+      },
+      "description": "<use_case>\nSet all LEDs in a designated Pulse zone to a solid static color.\n</use_case>\n\n<important_notes>\n- Stops any animated effect currently active in that zone.\n- Rate limited to protect power supply from high-draw current surges.\n</important_notes>\n",
+      "inputSchema": {
+        "properties": {
+          "color": {
+            "description": "A color name or 6-digit hex.",
+            "maxLength": 9,
+            "minLength": 3,
+            "title": "Color",
+            "type": "string"
+          },
+          "zone": {
+            "description": "A zone name (left_strip, right_strip, left_speaker_ring, right_speaker_ring, center_matrix, left_matrix, right_matrix) or a zone number 0-35.",
+            "maxLength": 20,
+            "minLength": 1,
+            "title": "Zone",
+            "type": "string"
+          }
+        },
+        "required": [
+          "zone",
+          "color"
+        ],
+        "title": "pixelcade_pulse_fillArguments",
+        "type": "object"
+      },
+      "name": "pixelcade_pulse_fill",
+      "outputSchema": {
+        "properties": {
+          "detail": {
+            "title": "Detail",
+            "type": "string"
+          },
+          "outcome": {
+            "enum": [
+              "done",
+              "unchanged",
+              "dry_run"
+            ],
+            "title": "Outcome",
+            "type": "string"
+          },
+          "pixelcade": {
+            "title": "Pixelcade",
+            "type": "string"
+          },
+          "sent": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Sent",
+            "type": "array"
+          },
+          "warnings": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Warnings",
+            "type": "array"
+          }
+        },
+        "required": [
+          "pixelcade",
+          "outcome",
+          "detail",
+          "sent",
+          "warnings"
+        ],
+        "title": "ActionResult",
+        "type": "object"
+      }
+    },
+    {
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false,
+        "readOnlyHint": false
+      },
+      "description": "<use_case>\nSet the global brightness level for all Pixelcade Pulse LEDs.\n</use_case>\n\n<important_notes>\n- Level must not exceed pulse_max_brightness (default 128) to protect hardware power rails.\n- Rate limited to protect power supplies against rapid power cycling.\n</important_notes>\n",
+      "inputSchema": {
+        "properties": {
+          "level": {
+            "description": "0-255, limited by the server's cap (see get_status).",
+            "maximum": 255,
+            "minimum": 0,
+            "title": "Level",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "level"
+        ],
+        "title": "pixelcade_set_pulse_brightnessArguments",
+        "type": "object"
+      },
+      "name": "pixelcade_set_pulse_brightness",
+      "outputSchema": {
+        "properties": {
+          "detail": {
+            "title": "Detail",
+            "type": "string"
+          },
+          "outcome": {
+            "enum": [
+              "done",
+              "unchanged",
+              "dry_run"
+            ],
+            "title": "Outcome",
+            "type": "string"
+          },
+          "pixelcade": {
+            "title": "Pixelcade",
+            "type": "string"
+          },
+          "sent": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Sent",
+            "type": "array"
+          },
+          "warnings": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Warnings",
+            "type": "array"
+          }
+        },
+        "required": [
+          "pixelcade",
+          "outcome",
+          "detail",
+          "sent",
+          "warnings"
+        ],
+        "title": "ActionResult",
+        "type": "object"
+      }
+    },
+    {
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false,
+        "readOnlyHint": false
+      },
+      "description": "<use_case>\nDisplay a console or system banner marquee (e.g., 'snes', 'genesis', 'mame').\n</use_case>\n\n<important_notes>\n- Typically displayed when browsing the system wheel in EmulationStation.\n- If artwork is missing, optional fallback_text will scroll.\n</important_notes>\n",
+      "inputSchema": {
+        "properties": {
+          "fallback_text": {
+            "anyOf": [
+              {
+                "maxLength": 200,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Text to scroll if there is no artwork.",
+            "title": "Fallback Text"
+          },
+          "system": {
+            "description": "Batocera system (ROM folder) name, e.g. 'mame', 'fbneo', 'snes', 'nes', 'genesis', 'n64'.",
+            "maxLength": 60,
+            "minLength": 1,
+            "title": "System",
+            "type": "string"
+          }
+        },
+        "required": [
+          "system"
+        ],
+        "title": "pixelcade_show_console_marqueeArguments",
+        "type": "object"
+      },
+      "name": "pixelcade_show_console_marquee",
+      "outputSchema": {
+        "properties": {
+          "detail": {
+            "title": "Detail",
+            "type": "string"
+          },
+          "outcome": {
+            "enum": [
+              "done",
+              "unchanged",
+              "dry_run"
+            ],
+            "title": "Outcome",
+            "type": "string"
+          },
+          "pixelcade": {
+            "title": "Pixelcade",
+            "type": "string"
+          },
+          "sent": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Sent",
+            "type": "array"
+          },
+          "warnings": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Warnings",
+            "type": "array"
+          }
+        },
+        "required": [
+          "pixelcade",
+          "outcome",
+          "detail",
+          "sent",
+          "warnings"
+        ],
+        "title": "ActionResult",
+        "type": "object"
+      }
+    },
+    {
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false,
+        "readOnlyHint": false
+      },
+      "description": "<use_case>\nRestore the marquee artwork corresponding to the game or system currently selected in the frontend.\n</use_case>\n\n<important_notes>\n- Useful after displaying temporary custom text or alerts to return the marquee to cabinet context.\n- If attract mode or screensaver was active, restores the last game known before screensaver.\n</important_notes>\n",
+      "inputSchema": {
+        "properties": {},
+        "title": "pixelcade_show_current_gameArguments",
+        "type": "object"
+      },
+      "name": "pixelcade_show_current_game",
+      "outputSchema": {
+        "properties": {
+          "detail": {
+            "title": "Detail",
+            "type": "string"
+          },
+          "outcome": {
+            "enum": [
+              "done",
+              "unchanged",
+              "dry_run"
+            ],
+            "title": "Outcome",
+            "type": "string"
+          },
+          "pixelcade": {
+            "title": "Pixelcade",
+            "type": "string"
+          },
+          "sent": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Sent",
+            "type": "array"
+          },
+          "warnings": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Warnings",
+            "type": "array"
+          }
+        },
+        "required": [
+          "pixelcade",
+          "outcome",
+          "detail",
+          "sent",
+          "warnings"
+        ],
+        "title": "ActionResult",
+        "type": "object"
+      }
+    },
+    {
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false,
+        "readOnlyHint": false
+      },
+      "description": "<use_case>\nDisplay the Pixelcade default marquee artwork (fallback artwork).\n</use_case>\n\n<important_notes>\n- Requires pixelweb version 8.0.14 or later.\n- Used when no game is active or to clear custom text.\n</important_notes>\n",
+      "inputSchema": {
+        "properties": {},
+        "title": "pixelcade_show_default_marqueeArguments",
+        "type": "object"
+      },
+      "name": "pixelcade_show_default_marquee",
+      "outputSchema": {
+        "properties": {
+          "detail": {
+            "title": "Detail",
+            "type": "string"
+          },
+          "outcome": {
+            "enum": [
+              "done",
+              "unchanged",
+              "dry_run"
+            ],
+            "title": "Outcome",
+            "type": "string"
+          },
+          "pixelcade": {
+            "title": "Pixelcade",
+            "type": "string"
+          },
+          "sent": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Sent",
+            "type": "array"
+          },
+          "warnings": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Warnings",
+            "type": "array"
+          }
+        },
+        "required": [
+          "pixelcade",
+          "outcome",
+          "detail",
+          "sent",
+          "warnings"
+        ],
+        "title": "ActionResult",
+        "type": "object"
+      }
+    },
+    {
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false,
+        "readOnlyHint": false
+      },
+      "description": "<use_case>\nDisplay a game's marquee artwork on the Pixelcade LED display.\n</use_case>\n\n<important_notes>\n- Replaces whatever is currently displayed unless loops is specified to queue it.\n- Frontend navigation or game launches will overwrite this display.\n- If the game has no artwork, fallback_text or the default marquee is displayed.\n</important_notes>\n",
+      "inputSchema": {
+        "properties": {
+          "animation": {
+            "default": "auto",
+            "description": "auto: animated then still if both exist; still: PNG only; animated: GIF only. If get_status says animated_marquees is false (Pixelcade's 'static PNG marquees only' setting), stills are shown instead.",
+            "enum": [
+              "auto",
+              "still",
+              "animated"
+            ],
+            "title": "Animation",
+            "type": "string"
+          },
+          "fallback_text": {
+            "anyOf": [
+              {
+                "maxLength": 200,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Text to scroll if there is no artwork.",
+            "title": "Fallback Text"
+          },
+          "loops": {
+            "anyOf": [
+              {
+                "maximum": 600,
+                "minimum": 1,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Queue instead of replacing: play a GIF this many times (or show a still this many seconds), then move to the next queued item. Omit to show it now and keep it up.",
+            "title": "Loops"
+          },
+          "pulse": {
+            "default": "follow",
+            "description": "Pulse LED strips: follow the game's theme, leave them as they are, or turn them off.",
+            "enum": [
+              "follow",
+              "skip",
+              "off"
+            ],
+            "title": "Pulse",
+            "type": "string"
+          },
+          "rom": {
+            "description": "ROM file name without its extension, e.g. 'pacman' or 'Super Mario World (USA)'.",
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Rom",
+            "type": "string"
+          },
+          "system": {
+            "description": "Batocera system (ROM folder) name, e.g. 'mame', 'fbneo', 'snes', 'nes', 'genesis', 'n64'.",
+            "maxLength": 60,
+            "minLength": 1,
+            "title": "System",
+            "type": "string"
+          }
+        },
+        "required": [
+          "system",
+          "rom"
+        ],
+        "title": "pixelcade_show_game_marqueeArguments",
+        "type": "object"
+      },
+      "name": "pixelcade_show_game_marquee",
+      "outputSchema": {
+        "properties": {
+          "detail": {
+            "title": "Detail",
+            "type": "string"
+          },
+          "outcome": {
+            "enum": [
+              "done",
+              "unchanged",
+              "dry_run"
+            ],
+            "title": "Outcome",
+            "type": "string"
+          },
+          "pixelcade": {
+            "title": "Pixelcade",
+            "type": "string"
+          },
+          "sent": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Sent",
+            "type": "array"
+          },
+          "warnings": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Warnings",
+            "type": "array"
+          }
+        },
+        "required": [
+          "pixelcade",
+          "outcome",
+          "detail",
+          "sent",
+          "warnings"
+        ],
+        "title": "ActionResult",
+        "type": "object"
+      }
+    },
+    {
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false,
+        "readOnlyHint": false
+      },
+      "description": "<use_case>\nDisplay custom text messages (scrolling or static) on the LED marquee.\n</use_case>\n\n<important_notes>\n- Supports multi-line layouts (lines=2 or lines=4) using newlines.\n- blink_ms is only supported for text of 9 characters or fewer.\n- loops=-1 holds the text on screen until the next command is sent.\n</important_notes>\n",
+      "inputSchema": {
+        "properties": {
+          "blink_ms": {
+            "anyOf": [
+              {
+                "maximum": 5000,
+                "minimum": 100,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Blink interval in ms. Only for 9 characters or fewer.",
+            "title": "Blink Ms"
+          },
+          "color": {
+            "anyOf": [
+              {
+                "maxLength": 7,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "A color name (red, blue, cyan, gray, darkgray, green, lightgray, magenta, orange, yellow, pink, white) or 6-digit hex like 'ff6d00'.",
+            "title": "Color"
+          },
+          "left_justify": {
+            "default": false,
+            "title": "Left Justify",
+            "type": "boolean"
+          },
+          "lines": {
+            "default": 1,
+            "description": "Text rows; 2 or 4 use smaller built-in fonts.",
+            "enum": [
+              1,
+              2,
+              4
+            ],
+            "title": "Lines",
+            "type": "integer"
+          },
+          "loops": {
+            "anyOf": [
+              {
+                "maximum": 100,
+                "minimum": -1,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Show it this many times (queued behind anything already queued), then the marquee goes blank; -1 keeps it up until something else is shown. Omit to show it now, once.",
+            "title": "Loops"
+          },
+          "scroll": {
+            "default": "auto",
+            "description": "auto: scroll only if it doesn't fit; scroll: always; fixed: never (auto-sized).",
+            "enum": [
+              "auto",
+              "scroll",
+              "fixed"
+            ],
+            "title": "Scroll",
+            "type": "string"
+          },
+          "speed": {
+            "anyOf": [
+              {
+                "maximum": 150,
+                "minimum": 1,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Scroll speed, 1-150; lower is faster.",
+            "title": "Speed"
+          },
+          "text": {
+            "description": "The message. Use newlines with lines=2 or 4.",
+            "maxLength": 500,
+            "minLength": 1,
+            "title": "Text",
+            "type": "string"
+          }
+        },
+        "required": [
+          "text"
+        ],
+        "title": "pixelcade_show_textArguments",
+        "type": "object"
+      },
+      "name": "pixelcade_show_text",
+      "outputSchema": {
+        "properties": {
+          "detail": {
+            "title": "Detail",
+            "type": "string"
+          },
+          "outcome": {
+            "enum": [
+              "done",
+              "unchanged",
+              "dry_run"
+            ],
+            "title": "Outcome",
+            "type": "string"
+          },
+          "pixelcade": {
+            "title": "Pixelcade",
+            "type": "string"
+          },
+          "sent": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Sent",
+            "type": "array"
+          },
+          "warnings": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Warnings",
+            "type": "array"
+          }
+        },
+        "required": [
+          "pixelcade",
+          "outcome",
+          "detail",
+          "sent",
+          "warnings"
+        ],
+        "title": "ActionResult",
+        "type": "object"
+      }
+    },
+    {
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false,
+        "readOnlyHint": false
+      },
+      "description": "<use_case>\nDisplay a live widget on the marquee (arcade-themed clock, weather, stock ticker, sports scores, attract mode).\n</use_case>\n\n<important_notes>\n- Widgets run continuously until replaced or stopped via pixelcade_stop_widgets.\n- lock=True prevents frontend scrolling from interrupting the widget until stopped.\n</important_notes>\n",
+      "inputSchema": {
+        "properties": {
+          "clock_style": {
+            "default": "digital",
+            "description": "For clock: 'digital' or an arcade theme.",
+            "enum": [
+              "digital",
+              "pacman",
+              "mspacman",
+              "galaga",
+              "arkanoid",
+              "tron",
+              "burgertime",
+              "dkong",
+              "invaders",
+              "centipede",
+              "asteroids",
+              "digdug",
+              "frogger",
+              "tetris",
+              "tempest",
+              "retro",
+              "sf2",
+              "metroid",
+              "castlevania",
+              "puzzlebobble"
+            ],
+            "title": "Clock Style",
+            "type": "string"
+          },
+          "league": {
+            "anyOf": [
+              {
+                "enum": [
+                  "nfl",
+                  "nba",
+                  "nhl",
+                  "mlb",
+                  "wnba",
+                  "college-football",
+                  "mens-college-basketball",
+                  "womens-college-basketball",
+                  "college-baseball",
+                  "eng.1",
+                  "esp.1",
+                  "ger.1",
+                  "ita.1",
+                  "fra.1",
+                  "por.1",
+                  "ned.1",
+                  "mex.1",
+                  "usa.1",
+                  "uefa.champions"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "For sports: omit for all leagues.",
+            "title": "League"
+          },
+          "location": {
+            "anyOf": [
+              {
+                "maxLength": 80,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "For weather: ZIP code or 'City,Country'. Omit for the location saved in Pixelcade.",
+            "title": "Location"
+          },
+          "lock": {
+            "default": false,
+            "description": "Lock it in place until stop_widgets (or a game launch): frontend scrolling and other marquee calls, this server's included, are ignored meanwhile.",
+            "title": "Lock",
+            "type": "boolean"
+          },
+          "teams": {
+            "anyOf": [
+              {
+                "maxLength": 200,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "For sports: comma-separated team codes, e.g. 'SF,GB'.",
+            "title": "Teams"
+          },
+          "tickers": {
+            "anyOf": [
+              {
+                "maxLength": 200,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "For stocks: comma-separated, e.g. 'AAPL,BTC-USD'.",
+            "title": "Tickers"
+          },
+          "twelve_hour": {
+            "default": true,
+            "description": "For clock: 12-hour format.",
+            "title": "Twelve Hour",
+            "type": "boolean"
+          },
+          "widget": {
+            "description": "attract runs the user's Pixelcade attract-mode playlist.",
+            "enum": [
+              "clock",
+              "weather",
+              "stocks",
+              "sports",
+              "attract"
+            ],
+            "title": "Widget",
+            "type": "string"
+          }
+        },
+        "required": [
+          "widget"
+        ],
+        "title": "pixelcade_show_widgetArguments",
+        "type": "object"
+      },
+      "name": "pixelcade_show_widget",
+      "outputSchema": {
+        "properties": {
+          "detail": {
+            "title": "Detail",
+            "type": "string"
+          },
+          "outcome": {
+            "enum": [
+              "done",
+              "unchanged",
+              "dry_run"
+            ],
+            "title": "Outcome",
+            "type": "string"
+          },
+          "pixelcade": {
+            "title": "Pixelcade",
+            "type": "string"
+          },
+          "sent": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Sent",
+            "type": "array"
+          },
+          "warnings": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Warnings",
+            "type": "array"
+          }
+        },
+        "required": [
+          "pixelcade",
+          "outcome",
+          "detail",
+          "sent",
+          "warnings"
+        ],
+        "title": "ActionResult",
+        "type": "object"
+      }
+    },
+    {
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false,
+        "readOnlyHint": false
+      },
+      "description": "<use_case>\nStop any running widget or attract-mode loop and restore normal arcade operation.\n</use_case>\n\n<important_notes>\n- Also clears the attract-mode lock set during screensavers or locked widgets.\n- Call this first if marquee commands appear to be ignored.\n</important_notes>\n",
+      "inputSchema": {
+        "properties": {},
+        "title": "pixelcade_stop_widgetsArguments",
+        "type": "object"
+      },
+      "name": "pixelcade_stop_widgets",
+      "outputSchema": {
+        "properties": {
+          "detail": {
+            "title": "Detail",
+            "type": "string"
+          },
+          "outcome": {
+            "enum": [
+              "done",
+              "unchanged",
+              "dry_run"
+            ],
+            "title": "Outcome",
+            "type": "string"
+          },
+          "pixelcade": {
+            "title": "Pixelcade",
+            "type": "string"
+          },
+          "sent": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Sent",
+            "type": "array"
+          },
+          "warnings": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Warnings",
+            "type": "array"
+          }
+        },
+        "required": [
+          "pixelcade",
+          "outcome",
+          "detail",
+          "sent",
+          "warnings"
+        ],
+        "title": "ActionResult",
+        "type": "object"
+      }
+    }
+  ]
+}

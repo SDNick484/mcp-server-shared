@@ -1,0 +1,1585 @@
+{
+  "commit": "4e9338b4fb741523ea30ba99b895ec758b4befb3",
+  "instructions": "Controls MiSTer FPGA retro-gaming hardware through Zaparoo Core and root SSH. In the gaming cabinet signal chain, the MiSTer FPGA acts as the Video and Audio Source feeding direct HDMI or analog RGB video into the AV Receiver (Onkyo) or TV (LG webOS). Game launch events trigger dynamic marquee updates on Pixelcade LED displays. Play tracking publishes real-time session events to Home Assistant via MQTT ('misterfpga/<host>/now_playing'). Call mister_get_status first: it lists each MiSTer by name and model, what it's playing, and its capabilities and limitations. Find games with mister_search_games or mister_play_history; launch them with mister_launch(game=<ref>). mister_launch refuses while a game is running: ask before ending one with mister_return_to_menu, since unsaved progress is lost. Pass host only when the call doesn't already say which MiSTer (a ref does).",
+  "package": "misterfpga_mcp",
+  "server": "misterfpga",
+  "tools": [
+    {
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false,
+        "readOnlyHint": false
+      },
+      "description": "\n<use_case>\nCreate a timestamped local backup of game saves and save states from the MiSTer.\n</use_case>\n<important_notes>\n- Rate-limited to prevent SD card and network IOPS exhaustion.\n- Uses hard links for unchanged files to save disk space.\n- Requires configured backup_dir and SSH connectivity.\n</important_notes>\n",
+      "inputSchema": {
+        "properties": {
+          "dry_run": {
+            "default": false,
+            "description": "Count what would be copied, write nothing.",
+            "title": "Dry Run",
+            "type": "boolean"
+          },
+          "host": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "MiSTer name from mister_get_status. Omit when the call already says which (a ref does).",
+            "title": "Host"
+          }
+        },
+        "title": "mister_backup_savesArguments",
+        "type": "object"
+      },
+      "name": "mister_backup_saves",
+      "outputSchema": {
+        "properties": {
+          "bytes_copied": {
+            "title": "Bytes Copied",
+            "type": "integer"
+          },
+          "copied": {
+            "title": "Copied",
+            "type": "integer"
+          },
+          "files": {
+            "title": "Files",
+            "type": "integer"
+          },
+          "host": {
+            "title": "Host",
+            "type": "string"
+          },
+          "linked": {
+            "title": "Linked",
+            "type": "integer"
+          },
+          "outcome": {
+            "enum": [
+              "done",
+              "dry_run"
+            ],
+            "title": "Outcome",
+            "type": "string"
+          },
+          "pruned": {
+            "title": "Pruned",
+            "type": "integer"
+          },
+          "snapshot": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Snapshot"
+          }
+        },
+        "required": [
+          "host",
+          "outcome",
+          "snapshot",
+          "files",
+          "copied",
+          "linked",
+          "bytes_copied",
+          "pruned"
+        ],
+        "title": "BackupInfo",
+        "type": "object"
+      }
+    },
+    {
+      "annotations": {
+        "openWorldHint": false,
+        "readOnlyHint": true
+      },
+      "description": "\n<use_case>\nRead sections and key-value pairs from MiSTer.ini configuration files on SD storage.\n</use_case>\n<important_notes>\n- Requires root SSH access to the device.\n- [MiSTer] section is global; core sections (e.g. [SNES]) provide per-core overrides.\n</important_notes>\n",
+      "inputSchema": {
+        "properties": {
+          "file": {
+            "default": "MiSTer.ini",
+            "description": "MiSTer.ini, or an alternate such as MiSTer_crt.ini (mister_get_ini lists them).",
+            "maxLength": 60,
+            "title": "File",
+            "type": "string"
+          },
+          "host": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "MiSTer name from mister_get_status. Omit when the call already says which (a ref does).",
+            "title": "Host"
+          },
+          "section": {
+            "anyOf": [
+              {
+                "maxLength": 60,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Only this section, e.g. MiSTer or SNES. Omit for all.",
+            "title": "Section"
+          }
+        },
+        "title": "mister_get_iniArguments",
+        "type": "object"
+      },
+      "name": "mister_get_ini",
+      "outputSchema": {
+        "properties": {
+          "file": {
+            "title": "File",
+            "type": "string"
+          },
+          "files": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Files",
+            "type": "array"
+          },
+          "host": {
+            "title": "Host",
+            "type": "string"
+          },
+          "sections": {
+            "additionalProperties": {
+              "additionalProperties": {
+                "type": "string"
+              },
+              "type": "object"
+            },
+            "title": "Sections",
+            "type": "object"
+          }
+        },
+        "required": [
+          "host",
+          "file",
+          "files",
+          "sections"
+        ],
+        "title": "IniView",
+        "type": "object"
+      }
+    },
+    {
+      "annotations": {
+        "openWorldHint": false,
+        "readOnlyHint": true
+      },
+      "description": "\n<use_case>\nInspect status across all configured MiSTer FPGA devices or a single target device.\n</use_case>\n<important_notes>\n- Start here: lists reachable devices, active cores, currently playing game ref, and capabilities/limitations.\n- limitations flags missing Zaparoo Core or unconfigured SSH.\n- attract_mode indicates active MiSTer Super Attract Mode demo cycle.\n</important_notes>\n",
+      "inputSchema": {
+        "properties": {
+          "host": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "MiSTer name from mister_get_status. Omit when the call already says which (a ref does).",
+            "title": "Host"
+          }
+        },
+        "title": "mister_get_statusArguments",
+        "type": "object"
+      },
+      "name": "mister_get_status",
+      "outputSchema": {
+        "$defs": {
+          "Backend": {
+            "properties": {
+              "connected": {
+                "title": "Connected",
+                "type": "boolean"
+              },
+              "detail": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Detail"
+              }
+            },
+            "required": [
+              "connected",
+              "detail"
+            ],
+            "title": "Backend",
+            "type": "object"
+          },
+          "HostStatus": {
+            "properties": {
+              "attract_mode": {
+                "anyOf": [
+                  {
+                    "type": "boolean"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Attract Mode"
+              },
+              "capabilities": {
+                "items": {
+                  "type": "string"
+                },
+                "title": "Capabilities",
+                "type": "array"
+              },
+              "core": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Core"
+              },
+              "free_space_mb": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Free Space Mb"
+              },
+              "library": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/Library"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "limitations": {
+                "items": {
+                  "type": "string"
+                },
+                "title": "Limitations",
+                "type": "array"
+              },
+              "model": {
+                "title": "Model",
+                "type": "string"
+              },
+              "name": {
+                "title": "Name",
+                "type": "string"
+              },
+              "now_playing": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/NowPlaying"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "reachable": {
+                "title": "Reachable",
+                "type": "boolean"
+              },
+              "ssh": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/Backend"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "zaparoo": {
+                "$ref": "#/$defs/Backend"
+              }
+            },
+            "required": [
+              "name",
+              "model",
+              "reachable",
+              "zaparoo",
+              "ssh",
+              "now_playing",
+              "core",
+              "attract_mode",
+              "library",
+              "free_space_mb",
+              "capabilities",
+              "limitations"
+            ],
+            "title": "HostStatus",
+            "type": "object"
+          },
+          "Library": {
+            "properties": {
+              "indexed": {
+                "title": "Indexed",
+                "type": "boolean"
+              },
+              "indexing": {
+                "title": "Indexing",
+                "type": "boolean"
+              },
+              "total_media": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Total Media"
+              }
+            },
+            "required": [
+              "indexed",
+              "indexing",
+              "total_media"
+            ],
+            "title": "Library",
+            "type": "object"
+          },
+          "NowPlaying": {
+            "properties": {
+              "game": {
+                "title": "Game",
+                "type": "string"
+              },
+              "ref": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Ref"
+              },
+              "started": {
+                "title": "Started",
+                "type": "string"
+              },
+              "system": {
+                "title": "System",
+                "type": "string"
+              },
+              "system_name": {
+                "title": "System Name",
+                "type": "string"
+              }
+            },
+            "required": [
+              "ref",
+              "game",
+              "system",
+              "system_name",
+              "started"
+            ],
+            "title": "NowPlaying",
+            "type": "object"
+          }
+        },
+        "properties": {
+          "dry_run": {
+            "title": "Dry Run",
+            "type": "boolean"
+          },
+          "hosts": {
+            "items": {
+              "$ref": "#/$defs/HostStatus"
+            },
+            "title": "Hosts",
+            "type": "array"
+          }
+        },
+        "required": [
+          "dry_run",
+          "hosts"
+        ],
+        "title": "Status",
+        "type": "object"
+      }
+    },
+    {
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false,
+        "readOnlyHint": false
+      },
+      "description": "\n<use_case>\nLaunch a game via ref or open a core without media on a MiSTer FPGA.\n</use_case>\n<important_notes>\n- Refuses to launch while another game is active; call mister_return_to_menu first.\n- Rate-limited to prevent rapid FPGA bitstream reconfiguration cycling.\n- Signals game start to Pixelcade marquees and MQTT play tracking.\n</important_notes>\n",
+      "inputSchema": {
+        "properties": {
+          "game": {
+            "anyOf": [
+              {
+                "maxLength": 80,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "A game ref from mister_search_games or mister_play_history, e.g. 'Family Room/4812'.",
+            "title": "Game"
+          },
+          "host": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "MiSTer name from mister_get_status. Omit when the call already says which (a ref does).",
+            "title": "Host"
+          },
+          "system": {
+            "anyOf": [
+              {
+                "maxLength": 40,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Instead of a game: a system id from mister_list_systems, to open its core with no game.",
+            "title": "System"
+          }
+        },
+        "title": "mister_launchArguments",
+        "type": "object"
+      },
+      "name": "mister_launch",
+      "outputSchema": {
+        "properties": {
+          "detail": {
+            "title": "Detail",
+            "type": "string"
+          },
+          "host": {
+            "title": "Host",
+            "type": "string"
+          },
+          "outcome": {
+            "enum": [
+              "done",
+              "unchanged",
+              "dry_run"
+            ],
+            "title": "Outcome",
+            "type": "string"
+          },
+          "warnings": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Warnings",
+            "type": "array"
+          }
+        },
+        "required": [
+          "host",
+          "outcome",
+          "detail",
+          "warnings"
+        ],
+        "title": "Outcome",
+        "type": "object"
+      }
+    },
+    {
+      "annotations": {
+        "openWorldHint": false,
+        "readOnlyHint": true
+      },
+      "description": "\n<use_case>\nList connected NFC readers, card-to-game mappings, and the last scanned card UID.\n</use_case>\n<important_notes>\n- Use this to check whether a reader supports write operations (can_write=True).\n- Returns the last scanned card UID for mister_map_nfc_card workflows.\n</important_notes>\n",
+      "inputSchema": {
+        "properties": {
+          "host": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "MiSTer name from mister_get_status. Omit when the call already says which (a ref does).",
+            "title": "Host"
+          }
+        },
+        "title": "mister_list_nfcArguments",
+        "type": "object"
+      },
+      "name": "mister_list_nfc",
+      "outputSchema": {
+        "$defs": {
+          "MappingInfo": {
+            "properties": {
+              "enabled": {
+                "title": "Enabled",
+                "type": "boolean"
+              },
+              "id": {
+                "title": "Id",
+                "type": "string"
+              },
+              "label": {
+                "title": "Label",
+                "type": "string"
+              },
+              "launches": {
+                "title": "Launches",
+                "type": "string"
+              },
+              "ours": {
+                "title": "Ours",
+                "type": "boolean"
+              },
+              "uid": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Uid"
+              }
+            },
+            "required": [
+              "id",
+              "label",
+              "enabled",
+              "uid",
+              "launches",
+              "ours"
+            ],
+            "title": "MappingInfo",
+            "type": "object"
+          },
+          "ReaderInfo": {
+            "properties": {
+              "can_write": {
+                "title": "Can Write",
+                "type": "boolean"
+              },
+              "connected": {
+                "title": "Connected",
+                "type": "boolean"
+              },
+              "driver": {
+                "title": "Driver",
+                "type": "string"
+              },
+              "id": {
+                "title": "Id",
+                "type": "string"
+              }
+            },
+            "required": [
+              "id",
+              "driver",
+              "connected",
+              "can_write"
+            ],
+            "title": "ReaderInfo",
+            "type": "object"
+          }
+        },
+        "properties": {
+          "host": {
+            "title": "Host",
+            "type": "string"
+          },
+          "last_card": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Card"
+          },
+          "last_card_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Card At"
+          },
+          "mappings": {
+            "items": {
+              "$ref": "#/$defs/MappingInfo"
+            },
+            "title": "Mappings",
+            "type": "array"
+          },
+          "readers": {
+            "items": {
+              "$ref": "#/$defs/ReaderInfo"
+            },
+            "title": "Readers",
+            "type": "array"
+          }
+        },
+        "required": [
+          "host",
+          "readers",
+          "mappings",
+          "last_card",
+          "last_card_at"
+        ],
+        "title": "NfcInfo",
+        "type": "object"
+      }
+    },
+    {
+      "annotations": {
+        "openWorldHint": false,
+        "readOnlyHint": true
+      },
+      "description": "\n<use_case>\nList indexed gaming systems, media counts, and FPGA cores across devices.\n</use_case>\n<important_notes>\n- Covers consoles, computers, and arcade cores configured on the MiSTer.\n- Use returned system id in mister_search_games, or pass to mister_launch to load a core with no game.\n</important_notes>\n",
+      "inputSchema": {
+        "properties": {
+          "host": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "MiSTer name from mister_get_status. Omit when the call already says which (a ref does).",
+            "title": "Host"
+          }
+        },
+        "title": "mister_list_systemsArguments",
+        "type": "object"
+      },
+      "name": "mister_list_systems",
+      "outputSchema": {
+        "$defs": {
+          "SystemInfo": {
+            "properties": {
+              "core": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Core"
+              },
+              "games": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Games"
+              },
+              "host": {
+                "title": "Host",
+                "type": "string"
+              },
+              "id": {
+                "title": "Id",
+                "type": "string"
+              },
+              "name": {
+                "title": "Name",
+                "type": "string"
+              }
+            },
+            "required": [
+              "host",
+              "id",
+              "name",
+              "games",
+              "core"
+            ],
+            "title": "SystemInfo",
+            "type": "object"
+          }
+        },
+        "properties": {
+          "systems": {
+            "items": {
+              "$ref": "#/$defs/SystemInfo"
+            },
+            "title": "Systems",
+            "type": "array"
+          },
+          "unavailable": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Unavailable",
+            "type": "array"
+          }
+        },
+        "required": [
+          "systems",
+          "unavailable"
+        ],
+        "title": "Systems",
+        "type": "object"
+      }
+    },
+    {
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false,
+        "readOnlyHint": false
+      },
+      "description": "\n<use_case>\nAssociate a physical card UID with a game in Zaparoo without writing to the card.\n</use_case>\n<important_notes>\n- Suitable for read-only cards, amiibo, or arcade tokens.\n- Uses last scanned UID if uid parameter is omitted.\n</important_notes>\n",
+      "inputSchema": {
+        "properties": {
+          "game": {
+            "description": "A game ref from mister_search_games or mister_play_history, e.g. 'Family Room/4812'.",
+            "maxLength": 80,
+            "title": "Game",
+            "type": "string"
+          },
+          "uid": {
+            "anyOf": [
+              {
+                "maxLength": 80,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "The card's UID. Omit to use the card scanned on that MiSTer in the last 2 minutes.",
+            "title": "Uid"
+          }
+        },
+        "required": [
+          "game"
+        ],
+        "title": "mister_map_nfc_cardArguments",
+        "type": "object"
+      },
+      "name": "mister_map_nfc_card",
+      "outputSchema": {
+        "properties": {
+          "detail": {
+            "title": "Detail",
+            "type": "string"
+          },
+          "host": {
+            "title": "Host",
+            "type": "string"
+          },
+          "outcome": {
+            "enum": [
+              "done",
+              "unchanged",
+              "dry_run"
+            ],
+            "title": "Outcome",
+            "type": "string"
+          },
+          "warnings": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Warnings",
+            "type": "array"
+          }
+        },
+        "required": [
+          "host",
+          "outcome",
+          "detail",
+          "warnings"
+        ],
+        "title": "Outcome",
+        "type": "object"
+      }
+    },
+    {
+      "annotations": {
+        "openWorldHint": false,
+        "readOnlyHint": true
+      },
+      "description": "\n<use_case>\nInspect recently played or most played games across MiSTer devices.\n</use_case>\n<important_notes>\n- Aggregated from Zaparoo Core logs on hardware.\n- Each row includes a launchable ref to immediately relaunch a game.\n</important_notes>\n",
+      "inputSchema": {
+        "properties": {
+          "host": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "MiSTer name from mister_get_status. Omit when the call already says which (a ref does).",
+            "title": "Host"
+          },
+          "limit": {
+            "default": 10,
+            "maximum": 50,
+            "minimum": 1,
+            "title": "Limit",
+            "type": "integer"
+          },
+          "mode": {
+            "default": "recent",
+            "description": "recent: last played first, one row per game. top: most played by total time.",
+            "enum": [
+              "recent",
+              "top"
+            ],
+            "title": "Mode",
+            "type": "string"
+          },
+          "system": {
+            "anyOf": [
+              {
+                "maxLength": 40,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "A system id from mister_list_systems, e.g. 'SNES' or 'Genesis'.",
+            "title": "System"
+          }
+        },
+        "title": "mister_play_historyArguments",
+        "type": "object"
+      },
+      "name": "mister_play_history",
+      "outputSchema": {
+        "$defs": {
+          "HistoryEntry": {
+            "properties": {
+              "game": {
+                "title": "Game",
+                "type": "string"
+              },
+              "host": {
+                "title": "Host",
+                "type": "string"
+              },
+              "last_played": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Last Played"
+              },
+              "play_time_s": {
+                "title": "Play Time S",
+                "type": "integer"
+              },
+              "ref": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Ref"
+              },
+              "sessions": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Sessions"
+              },
+              "system": {
+                "title": "System",
+                "type": "string"
+              }
+            },
+            "required": [
+              "ref",
+              "host",
+              "game",
+              "system",
+              "last_played",
+              "play_time_s",
+              "sessions"
+            ],
+            "title": "HistoryEntry",
+            "type": "object"
+          }
+        },
+        "properties": {
+          "entries": {
+            "items": {
+              "$ref": "#/$defs/HistoryEntry"
+            },
+            "title": "Entries",
+            "type": "array"
+          },
+          "unavailable": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Unavailable",
+            "type": "array"
+          }
+        },
+        "required": [
+          "entries",
+          "unavailable"
+        ],
+        "title": "History",
+        "type": "object"
+      }
+    },
+    {
+      "annotations": {
+        "destructiveHint": true,
+        "idempotentHint": true,
+        "openWorldHint": false,
+        "readOnlyHint": false
+      },
+      "description": "\n<use_case>\nExit the active game and reload the MiSTer main menu core.\n</use_case>\n<important_notes>\n- DESTRUCTIVE: Unsaved game progress will be lost.\n- If host is omitted, acts on whichever MiSTer is currently running a game.\n</important_notes>\n",
+      "inputSchema": {
+        "properties": {
+          "host": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "MiSTer name from mister_get_status. Omit when the call already says which (a ref does).",
+            "title": "Host"
+          }
+        },
+        "title": "mister_return_to_menuArguments",
+        "type": "object"
+      },
+      "name": "mister_return_to_menu",
+      "outputSchema": {
+        "$defs": {
+          "Outcome": {
+            "properties": {
+              "detail": {
+                "title": "Detail",
+                "type": "string"
+              },
+              "host": {
+                "title": "Host",
+                "type": "string"
+              },
+              "outcome": {
+                "enum": [
+                  "done",
+                  "unchanged",
+                  "dry_run"
+                ],
+                "title": "Outcome",
+                "type": "string"
+              },
+              "warnings": {
+                "items": {
+                  "type": "string"
+                },
+                "title": "Warnings",
+                "type": "array"
+              }
+            },
+            "required": [
+              "host",
+              "outcome",
+              "detail",
+              "warnings"
+            ],
+            "title": "Outcome",
+            "type": "object"
+          }
+        },
+        "properties": {
+          "results": {
+            "items": {
+              "$ref": "#/$defs/Outcome"
+            },
+            "title": "Results",
+            "type": "array"
+          }
+        },
+        "required": [
+          "results"
+        ],
+        "title": "Results",
+        "type": "object"
+      }
+    },
+    {
+      "annotations": {
+        "destructiveHint": true,
+        "idempotentHint": false,
+        "openWorldHint": false,
+        "readOnlyHint": false
+      },
+      "description": "\n<use_case>\nTrigger update_all.sh to update cores, scripts, and Linux system files.\n</use_case>\n<important_notes>\n- DESTRUCTIVE: Runs on screen for several minutes and may trigger a system reboot.\n- Refused if a game is currently playing.\n- Rate-limited to once per hour to prevent reboot loops.\n</important_notes>\n",
+      "inputSchema": {
+        "properties": {
+          "confirm": {
+            "const": true,
+            "description": "Must be true: you've confirmed with the user that it may reboot.",
+            "title": "Confirm",
+            "type": "boolean"
+          },
+          "host": {
+            "description": "MiSTer name from mister_get_status. Required: there's no default for this.",
+            "title": "Host",
+            "type": "string"
+          }
+        },
+        "required": [
+          "host",
+          "confirm"
+        ],
+        "title": "mister_run_updateArguments",
+        "type": "object"
+      },
+      "name": "mister_run_update",
+      "outputSchema": {
+        "properties": {
+          "detail": {
+            "title": "Detail",
+            "type": "string"
+          },
+          "host": {
+            "title": "Host",
+            "type": "string"
+          },
+          "outcome": {
+            "enum": [
+              "done",
+              "unchanged",
+              "dry_run"
+            ],
+            "title": "Outcome",
+            "type": "string"
+          },
+          "warnings": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Warnings",
+            "type": "array"
+          }
+        },
+        "required": [
+          "host",
+          "outcome",
+          "detail",
+          "warnings"
+        ],
+        "title": "Outcome",
+        "type": "object"
+      }
+    },
+    {
+      "annotations": {
+        "openWorldHint": false,
+        "readOnlyHint": true
+      },
+      "description": "\n<use_case>\nSearch for games across MiSTer FPGA libraries by name query and optional system filter.\n</use_case>\n<important_notes>\n- Returns launchable game refs (e.g. 'Family Room/4812').\n- The ref encapsulates target host and mediaId for subsequent mister_launch calls.\n- variant differentiates region/revision/hack versions.\n</important_notes>\n",
+      "inputSchema": {
+        "properties": {
+          "host": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "MiSTer name from mister_get_status. Omit when the call already says which (a ref does).",
+            "title": "Host"
+          },
+          "limit": {
+            "default": 20,
+            "description": "Most results per MiSTer.",
+            "maximum": 50,
+            "minimum": 1,
+            "title": "Limit",
+            "type": "integer"
+          },
+          "query": {
+            "description": "Words in the game's name, e.g. 'metroid'.",
+            "maxLength": 100,
+            "minLength": 1,
+            "title": "Query",
+            "type": "string"
+          },
+          "system": {
+            "anyOf": [
+              {
+                "maxLength": 40,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "A system id from mister_list_systems, e.g. 'SNES' or 'Genesis'.",
+            "title": "System"
+          }
+        },
+        "required": [
+          "query"
+        ],
+        "title": "mister_search_gamesArguments",
+        "type": "object"
+      },
+      "name": "mister_search_games",
+      "outputSchema": {
+        "$defs": {
+          "GameInfo": {
+            "properties": {
+              "host": {
+                "title": "Host",
+                "type": "string"
+              },
+              "name": {
+                "title": "Name",
+                "type": "string"
+              },
+              "path": {
+                "title": "Path",
+                "type": "string"
+              },
+              "ref": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Ref"
+              },
+              "system": {
+                "title": "System",
+                "type": "string"
+              },
+              "system_name": {
+                "title": "System Name",
+                "type": "string"
+              },
+              "variant": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Variant"
+              }
+            },
+            "required": [
+              "ref",
+              "host",
+              "name",
+              "system",
+              "system_name",
+              "variant",
+              "path"
+            ],
+            "title": "GameInfo",
+            "type": "object"
+          }
+        },
+        "properties": {
+          "results": {
+            "items": {
+              "$ref": "#/$defs/GameInfo"
+            },
+            "title": "Results",
+            "type": "array"
+          },
+          "truncated": {
+            "title": "Truncated",
+            "type": "boolean"
+          },
+          "unavailable": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Unavailable",
+            "type": "array"
+          }
+        },
+        "required": [
+          "results",
+          "truncated",
+          "unavailable"
+        ],
+        "title": "Search",
+        "type": "object"
+      }
+    },
+    {
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false,
+        "readOnlyHint": false
+      },
+      "description": "\n<use_case>\nModify or clear a configuration key in MiSTer.ini (or alternate ini).\n</use_case>\n<important_notes>\n- Creates a timestamped .bak backup on SD storage before writing.\n- Rate-limited to guard against rapid SD card wear.\n- Dangerous system keys (main, bootcore, shared_folder) are disallowed.\n</important_notes>\n",
+      "inputSchema": {
+        "properties": {
+          "dry_run": {
+            "default": false,
+            "description": "Show the change (diff) without writing it.",
+            "title": "Dry Run",
+            "type": "boolean"
+          },
+          "file": {
+            "default": "MiSTer.ini",
+            "description": "MiSTer.ini, or an alternate such as MiSTer_crt.ini (mister_get_ini lists them).",
+            "maxLength": 60,
+            "title": "File",
+            "type": "string"
+          },
+          "host": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "MiSTer name from mister_get_status. Omit when the call already says which (a ref does).",
+            "title": "Host"
+          },
+          "key": {
+            "description": "A MiSTer.ini key, e.g. vscale_mode (misterfpga://ini-keys lists them).",
+            "maxLength": 40,
+            "title": "Key",
+            "type": "string"
+          },
+          "section": {
+            "default": "MiSTer",
+            "description": "MiSTer (global), arcade, arcade_vertical, video=<WxH@Hz>, or a core name like SNES.",
+            "maxLength": 60,
+            "title": "Section",
+            "type": "string"
+          },
+          "value": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "integer"
+              },
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The new value, checked against the key's type and range. null removes the key.",
+            "title": "Value"
+          }
+        },
+        "required": [
+          "key",
+          "value"
+        ],
+        "title": "mister_set_iniArguments",
+        "type": "object"
+      },
+      "name": "mister_set_ini",
+      "outputSchema": {
+        "properties": {
+          "backup": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Backup"
+          },
+          "detail": {
+            "title": "Detail",
+            "type": "string"
+          },
+          "diff": {
+            "title": "Diff",
+            "type": "string"
+          },
+          "file": {
+            "title": "File",
+            "type": "string"
+          },
+          "host": {
+            "title": "Host",
+            "type": "string"
+          },
+          "key": {
+            "title": "Key",
+            "type": "string"
+          },
+          "new": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "New"
+          },
+          "old": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Old"
+          },
+          "outcome": {
+            "enum": [
+              "done",
+              "unchanged",
+              "dry_run"
+            ],
+            "title": "Outcome",
+            "type": "string"
+          },
+          "section": {
+            "title": "Section",
+            "type": "string"
+          },
+          "warnings": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Warnings",
+            "type": "array"
+          }
+        },
+        "required": [
+          "host",
+          "outcome",
+          "detail",
+          "file",
+          "section",
+          "key",
+          "old",
+          "new",
+          "backup",
+          "diff",
+          "warnings"
+        ],
+        "title": "IniChange",
+        "type": "object"
+      }
+    },
+    {
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": false,
+        "readOnlyHint": false
+      },
+      "description": "\n<use_case>\nCapture the current video output of the MiSTer as an image.\n</use_case>\n<important_notes>\n- Rate-limited to avoid SD card write exhaustion.\n- Saves PNG to /media/fat/screenshots and returns inline ImageContent.\n</important_notes>\n",
+      "inputSchema": {
+        "properties": {
+          "host": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "MiSTer name from mister_get_status. Omit when the call already says which (a ref does).",
+            "title": "Host"
+          }
+        },
+        "title": "mister_take_screenshotArguments",
+        "type": "object"
+      },
+      "name": "mister_take_screenshot"
+    },
+    {
+      "annotations": {
+        "destructiveHint": true,
+        "idempotentHint": false,
+        "openWorldHint": false,
+        "readOnlyHint": false
+      },
+      "description": "\n<use_case>\nWrite game launch metadata to an NFC card on a compatible writer.\n</use_case>\n<important_notes>\n- DESTRUCTIVE: Overwrites existing payload on the NFC tag.\n- Prompts user to place card on reader; waits up to 60s.\n</important_notes>\n",
+      "inputSchema": {
+        "properties": {
+          "game": {
+            "description": "A game ref from mister_search_games or mister_play_history, e.g. 'Family Room/4812'.",
+            "maxLength": 80,
+            "title": "Game",
+            "type": "string"
+          },
+          "reader": {
+            "anyOf": [
+              {
+                "maxLength": 80,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Reader id from mister_list_nfc, when there's more than one.",
+            "title": "Reader"
+          }
+        },
+        "required": [
+          "game"
+        ],
+        "title": "mister_write_nfc_cardArguments",
+        "type": "object"
+      },
+      "name": "mister_write_nfc_card",
+      "outputSchema": {
+        "properties": {
+          "detail": {
+            "title": "Detail",
+            "type": "string"
+          },
+          "host": {
+            "title": "Host",
+            "type": "string"
+          },
+          "outcome": {
+            "enum": [
+              "done",
+              "unchanged",
+              "dry_run"
+            ],
+            "title": "Outcome",
+            "type": "string"
+          },
+          "warnings": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Warnings",
+            "type": "array"
+          }
+        },
+        "required": [
+          "host",
+          "outcome",
+          "detail",
+          "warnings"
+        ],
+        "title": "Outcome",
+        "type": "object"
+      }
+    }
+  ]
+}

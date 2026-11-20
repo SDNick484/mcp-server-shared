@@ -1,0 +1,1450 @@
+{
+  "commit": "a89dfcd61659042841da7aa12c238ac89e4aa739",
+  "instructions": "Physical role: Display & Video Sink. Controls LG webOS TVs. Connects downstream of the AVR (Onkyo) or switches video inputs directly; delegates master volume control to the AVR when volume_owner is 'external'. Call webos_get_status first: it says whether each TV is on, what is in front, and (capabilities, limitations) what works on it. With several TVs, name one with `tv`; a call without it is refused rather than guessed. When a TV's sound goes to a receiver (volume_owner 'external'), volume belongs to the receiver's own server (onkyo_set_volume), not to this one. A TV that is off doesn't answer: power 'off' means off or off the network, and webos_set_power on wakes it. To type, prefer webos_insert_text over walking an on-screen keyboard with webos_send_key, where get_status lists text_input; it only reaches system text fields (LG's search), so for YouTube use webos_search_app.",
+  "package": "webos_mcp",
+  "server": "webos",
+  "tools": [
+    {
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": false,
+        "readOnlyHint": false
+      },
+      "description": "Delete characters before the cursor in the TV's focused text field (like Backspace).\n\n<use_case>\nCorrect a typo after webos_insert_text. To start over, webos_insert_text with replace=true is simpler.\n</use_case>\n\n<important_notes>\n- Same rules as `webos_insert_text`: a focused system text field only; refused otherwise.\n</important_notes>\n",
+      "inputSchema": {
+        "properties": {
+          "count": {
+            "default": 1,
+            "description": "How many characters to delete (1-100).",
+            "maximum": 100,
+            "minimum": 1,
+            "title": "Count",
+            "type": "integer"
+          },
+          "tv": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Which TV: its name (e.g. a room), an alias, or its address. Omit when there is only one; with several, a call without it is refused rather than guessed.",
+            "title": "Tv"
+          }
+        },
+        "title": "webos_delete_textArguments",
+        "type": "object"
+      },
+      "name": "webos_delete_text",
+      "outputSchema": {
+        "properties": {
+          "detail": {
+            "title": "Detail",
+            "type": "string"
+          },
+          "outcome": {
+            "enum": [
+              "done",
+              "unchanged",
+              "dry_run"
+            ],
+            "title": "Outcome",
+            "type": "string"
+          },
+          "sent": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Sent",
+            "type": "array"
+          },
+          "tv": {
+            "title": "Tv",
+            "type": "string"
+          },
+          "warnings": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Warnings",
+            "type": "array"
+          }
+        },
+        "required": [
+          "tv",
+          "outcome",
+          "detail",
+          "sent",
+          "warnings"
+        ],
+        "title": "ActionResult",
+        "type": "object"
+      }
+    },
+    {
+      "annotations": {
+        "openWorldHint": false,
+        "readOnlyHint": true
+      },
+      "description": "Query current TV power state, foreground app or input, and audio configuration.\n\n<use_case>\nInspect TV state before issuing commands. Determine whether the TV is on, which source is active,\nand whether audio is handled locally or routed to an AVR.\n</use_case>\n\n<important_notes>\n- Start here before issuing media or input commands.\n- When `volume_owner` is \"external\", volume control belongs to the AVR (`onkyo_set_volume`), not this TV.\n- Stale status indicates the TV is in standby or powered off; wake with `webos_set_power(state=\"on\")`.\n</important_notes>\n",
+      "inputSchema": {
+        "properties": {
+          "tv": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Which TV: its name (e.g. a room), an alias, or its address. Omit when there is only one; with several, a call without it is refused rather than guessed.",
+            "title": "Tv"
+          }
+        },
+        "title": "webos_get_statusArguments",
+        "type": "object"
+      },
+      "name": "webos_get_status",
+      "outputSchema": {
+        "$defs": {
+          "Foreground": {
+            "properties": {
+              "id": {
+                "title": "Id",
+                "type": "string"
+              },
+              "title": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Title"
+              }
+            },
+            "required": [
+              "id",
+              "title"
+            ],
+            "title": "Foreground",
+            "type": "object"
+          },
+          "NowPlaying": {
+            "properties": {
+              "app": {
+                "title": "App",
+                "type": "string"
+              },
+              "play_state": {
+                "title": "Play State",
+                "type": "string"
+              },
+              "title": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Title"
+              }
+            },
+            "required": [
+              "app",
+              "title",
+              "play_state"
+            ],
+            "title": "NowPlaying",
+            "type": "object"
+          },
+          "Status": {
+            "properties": {
+              "as_of": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "As Of"
+              },
+              "capabilities": {
+                "items": {
+                  "type": "string"
+                },
+                "title": "Capabilities",
+                "type": "array"
+              },
+              "dry_run": {
+                "title": "Dry Run",
+                "type": "boolean"
+              },
+              "error": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Error"
+              },
+              "foreground_app": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/Foreground"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "host": {
+                "title": "Host",
+                "type": "string"
+              },
+              "input": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Input"
+              },
+              "limitations": {
+                "items": {
+                  "type": "string"
+                },
+                "title": "Limitations",
+                "type": "array"
+              },
+              "model": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Model"
+              },
+              "muted": {
+                "anyOf": [
+                  {
+                    "type": "boolean"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Muted"
+              },
+              "needs_pairing": {
+                "title": "Needs Pairing",
+                "type": "boolean"
+              },
+              "now_playing": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/NowPlaying"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "paired": {
+                "title": "Paired",
+                "type": "boolean"
+              },
+              "platform": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Platform"
+              },
+              "power": {
+                "enum": [
+                  "on",
+                  "screen_off",
+                  "standby",
+                  "off"
+                ],
+                "title": "Power",
+                "type": "string"
+              },
+              "power_raw": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Power Raw"
+              },
+              "reachable": {
+                "title": "Reachable",
+                "type": "boolean"
+              },
+              "sound_output": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Sound Output"
+              },
+              "stale": {
+                "title": "Stale",
+                "type": "boolean"
+              },
+              "tv": {
+                "title": "Tv",
+                "type": "string"
+              },
+              "volume": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Volume"
+              },
+              "volume_owner": {
+                "enum": [
+                  "tv",
+                  "external",
+                  "unknown"
+                ],
+                "title": "Volume Owner",
+                "type": "string"
+              },
+              "warnings": {
+                "items": {
+                  "type": "string"
+                },
+                "title": "Warnings",
+                "type": "array"
+              }
+            },
+            "required": [
+              "tv",
+              "model",
+              "host",
+              "platform",
+              "paired",
+              "needs_pairing",
+              "dry_run",
+              "reachable",
+              "stale",
+              "as_of",
+              "error",
+              "power",
+              "power_raw",
+              "foreground_app",
+              "input",
+              "now_playing",
+              "volume",
+              "muted",
+              "sound_output",
+              "volume_owner",
+              "capabilities",
+              "limitations",
+              "warnings"
+            ],
+            "title": "Status",
+            "type": "object"
+          }
+        },
+        "properties": {
+          "hint": {
+            "title": "Hint",
+            "type": "string"
+          },
+          "tvs": {
+            "items": {
+              "$ref": "#/$defs/Status"
+            },
+            "title": "Tvs",
+            "type": "array"
+          }
+        },
+        "required": [
+          "tvs"
+        ],
+        "title": "StatusReport",
+        "type": "object"
+      }
+    },
+    {
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": false,
+        "readOnlyHint": false
+      },
+      "description": "Type text into the TV's focused text field, instead of walking an on-screen keyboard with keys.\n\n<use_case>\nFill a search box or other text field on the TV in one call: e.g. open LG's search and type\n\"lofi beats\", then webos_submit_text.\n</use_case>\n\n<important_notes>\n- Only works where get_status lists `text_input`, and only in *system* text fields (LG's own\n  search, and fields that use the TV's keyboard). The field must already have focus.\n- Refused, with nothing sent, when no system field has focus. YouTube and Netflix draw their\n  own keyboards and never have one: use `webos_search_app` for YouTube, or `webos_send_key`\n  (arrows, ENTER) on the app's keyboard.\n- Confirmed by the field's reported length where the TV reports it; a warning says when not.\n</important_notes>\n",
+      "inputSchema": {
+        "properties": {
+          "replace": {
+            "default": false,
+            "description": "True: replace everything in the field. False: add at the cursor.",
+            "title": "Replace",
+            "type": "boolean"
+          },
+          "text": {
+            "description": "What to type: one line, up to 200 characters (no newlines; submit with webos_submit_text).",
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Text",
+            "type": "string"
+          },
+          "tv": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Which TV: its name (e.g. a room), an alias, or its address. Omit when there is only one; with several, a call without it is refused rather than guessed.",
+            "title": "Tv"
+          }
+        },
+        "required": [
+          "text"
+        ],
+        "title": "webos_insert_textArguments",
+        "type": "object"
+      },
+      "name": "webos_insert_text",
+      "outputSchema": {
+        "properties": {
+          "detail": {
+            "title": "Detail",
+            "type": "string"
+          },
+          "outcome": {
+            "enum": [
+              "done",
+              "unchanged",
+              "dry_run"
+            ],
+            "title": "Outcome",
+            "type": "string"
+          },
+          "sent": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Sent",
+            "type": "array"
+          },
+          "tv": {
+            "title": "Tv",
+            "type": "string"
+          },
+          "warnings": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Warnings",
+            "type": "array"
+          }
+        },
+        "required": [
+          "tv",
+          "outcome",
+          "detail",
+          "sent",
+          "warnings"
+        ],
+        "title": "ActionResult",
+        "type": "object"
+      }
+    },
+    {
+      "annotations": {
+        "openWorldHint": false,
+        "readOnlyHint": true
+      },
+      "description": "List available apps and physical HDMI inputs on a TV.\n\n<use_case>\nDiscover valid source names and inputs to supply to `webos_select_source`.\n</use_case>\n\n<important_notes>\n- Returns allow-listed installed apps and connected HDMI inputs.\n- Use the returned `name` values as inputs for `webos_select_source`.\n</important_notes>\n",
+      "inputSchema": {
+        "properties": {
+          "tv": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Which TV: its name (e.g. a room), an alias, or its address. Omit when there is only one; with several, a call without it is refused rather than guessed.",
+            "title": "Tv"
+          }
+        },
+        "title": "webos_list_sourcesArguments",
+        "type": "object"
+      },
+      "name": "webos_list_sources",
+      "outputSchema": {
+        "$defs": {
+          "Source": {
+            "properties": {
+              "connected": {
+                "anyOf": [
+                  {
+                    "type": "boolean"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Connected"
+              },
+              "id": {
+                "title": "Id",
+                "type": "string"
+              },
+              "kind": {
+                "enum": [
+                  "app",
+                  "input"
+                ],
+                "title": "Kind",
+                "type": "string"
+              },
+              "name": {
+                "title": "Name",
+                "type": "string"
+              },
+              "title": {
+                "title": "Title",
+                "type": "string"
+              }
+            },
+            "title": "Source",
+            "type": "object"
+          }
+        },
+        "properties": {
+          "result": {
+            "items": {
+              "$ref": "#/$defs/Source"
+            },
+            "title": "Result",
+            "type": "array"
+          }
+        },
+        "required": [
+          "result"
+        ],
+        "title": "webos_list_sourcesOutput",
+        "type": "object"
+      }
+    },
+    {
+      "annotations": {
+        "openWorldHint": false,
+        "readOnlyHint": true
+      },
+      "description": "List the configured TVs.\n\n<use_case>\nEnumerate all configured TV targets, discovering accepted identifiers for the `tv` parameter,\nhardware models, and webOS firmware versions.\n</use_case>\n\n<important_notes>\n- Returns friendly names and aliases usable in the `tv` argument across all tools.\n- Read-only; queries local configuration and current connection states without sending network commands.\n</important_notes>\n",
+      "inputSchema": {
+        "properties": {},
+        "title": "webos_list_tvsArguments",
+        "type": "object"
+      },
+      "name": "webos_list_tvs",
+      "outputSchema": {
+        "$defs": {
+          "TvSummary": {
+            "properties": {
+              "aliases": {
+                "items": {
+                  "type": "string"
+                },
+                "title": "Aliases",
+                "type": "array"
+              },
+              "model": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Model"
+              },
+              "paired": {
+                "title": "Paired",
+                "type": "boolean"
+              },
+              "platform": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Platform"
+              },
+              "reachable": {
+                "title": "Reachable",
+                "type": "boolean"
+              },
+              "tv": {
+                "title": "Tv",
+                "type": "string"
+              }
+            },
+            "required": [
+              "tv",
+              "aliases",
+              "model",
+              "platform",
+              "paired",
+              "reachable"
+            ],
+            "title": "TvSummary",
+            "type": "object"
+          }
+        },
+        "properties": {
+          "result": {
+            "items": {
+              "$ref": "#/$defs/TvSummary"
+            },
+            "title": "Result",
+            "type": "array"
+          }
+        },
+        "required": [
+          "result"
+        ],
+        "title": "webos_list_tvsOutput",
+        "type": "object"
+      }
+    },
+    {
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": false,
+        "readOnlyHint": false
+      },
+      "description": "Send media playback commands (play, pause, stop, fast forward, rewind).\n\n<use_case>\nControl playback state of currently active media app on the TV.\n</use_case>\n\n<important_notes>\n- Direct media endpoints may be ignored by certain third-party apps; use `webos_send_key`\n  with \"PLAY\" / \"PAUSE\" as fallback.\n- Operates on foreground media applications.\n</important_notes>\n",
+      "inputSchema": {
+        "properties": {
+          "action": {
+            "enum": [
+              "play",
+              "pause",
+              "stop",
+              "rewind",
+              "fast_forward"
+            ],
+            "title": "Action",
+            "type": "string"
+          },
+          "tv": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Which TV: its name (e.g. a room), an alias, or its address. Omit when there is only one; with several, a call without it is refused rather than guessed.",
+            "title": "Tv"
+          }
+        },
+        "required": [
+          "action"
+        ],
+        "title": "webos_media_controlArguments",
+        "type": "object"
+      },
+      "name": "webos_media_control",
+      "outputSchema": {
+        "properties": {
+          "detail": {
+            "title": "Detail",
+            "type": "string"
+          },
+          "outcome": {
+            "enum": [
+              "done",
+              "unchanged",
+              "dry_run"
+            ],
+            "title": "Outcome",
+            "type": "string"
+          },
+          "sent": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Sent",
+            "type": "array"
+          },
+          "tv": {
+            "title": "Tv",
+            "type": "string"
+          },
+          "warnings": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Warnings",
+            "type": "array"
+          }
+        },
+        "required": [
+          "tv",
+          "outcome",
+          "detail",
+          "sent",
+          "warnings"
+        ],
+        "title": "ActionResult",
+        "type": "object"
+      }
+    },
+    {
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false,
+        "readOnlyHint": false
+      },
+      "description": "Open an app straight to its search results for a query (YouTube).\n\n<use_case>\n\"Search YouTube for lofi beats\": opens YouTube on its results, with no typing. YouTube's own\nkeyboard doesn't take webos_insert_text, so this is the way to search it.\n</use_case>\n\n<important_notes>\n- Only works where get_status lists `app_search`: the app must be allow-listed and installed,\n  and older TVs (webOS 3.x) ignore the search and just open the app.\n- The server builds the link from the query; no URL is accepted.\n- Confirms the app is in front. The TV can't report whether the app ran the search.\n</important_notes>\n",
+      "inputSchema": {
+        "properties": {
+          "app": {
+            "const": "youtube",
+            "description": "Which app to search. Only YouTube has a search link.",
+            "title": "App",
+            "type": "string"
+          },
+          "query": {
+            "description": "What to search for, up to 100 characters.",
+            "maxLength": 100,
+            "minLength": 1,
+            "title": "Query",
+            "type": "string"
+          },
+          "tv": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Which TV: its name (e.g. a room), an alias, or its address. Omit when there is only one; with several, a call without it is refused rather than guessed.",
+            "title": "Tv"
+          }
+        },
+        "required": [
+          "app",
+          "query"
+        ],
+        "title": "webos_search_appArguments",
+        "type": "object"
+      },
+      "name": "webos_search_app",
+      "outputSchema": {
+        "properties": {
+          "detail": {
+            "title": "Detail",
+            "type": "string"
+          },
+          "outcome": {
+            "enum": [
+              "done",
+              "unchanged",
+              "dry_run"
+            ],
+            "title": "Outcome",
+            "type": "string"
+          },
+          "sent": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Sent",
+            "type": "array"
+          },
+          "tv": {
+            "title": "Tv",
+            "type": "string"
+          },
+          "warnings": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Warnings",
+            "type": "array"
+          }
+        },
+        "required": [
+          "tv",
+          "outcome",
+          "detail",
+          "sent",
+          "warnings"
+        ],
+        "title": "ActionResult",
+        "type": "object"
+      }
+    },
+    {
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false,
+        "readOnlyHint": false
+      },
+      "description": "Launch an application or switch to a physical HDMI input.\n\n<use_case>\nSwitch video display to a streaming service (e.g. Netflix, YouTube) or an\nexternal HDMI input (e.g. AVR / game console).\n</use_case>\n\n<important_notes>\n- TV must be powered on.\n- Verifies the selected source is foregrounded before returning.\n- If switching to an external device connected through an AVR, ensure the\n  AVR input is also switched (`onkyo_set_input`).\n</important_notes>\n",
+      "inputSchema": {
+        "properties": {
+          "source": {
+            "description": "An app or input name from webos_list_sources, e.g. 'netflix' or 'Onkyo'.",
+            "title": "Source",
+            "type": "string"
+          },
+          "tv": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Which TV: its name (e.g. a room), an alias, or its address. Omit when there is only one; with several, a call without it is refused rather than guessed.",
+            "title": "Tv"
+          }
+        },
+        "required": [
+          "source"
+        ],
+        "title": "webos_select_sourceArguments",
+        "type": "object"
+      },
+      "name": "webos_select_source",
+      "outputSchema": {
+        "properties": {
+          "detail": {
+            "title": "Detail",
+            "type": "string"
+          },
+          "outcome": {
+            "enum": [
+              "done",
+              "unchanged",
+              "dry_run"
+            ],
+            "title": "Outcome",
+            "type": "string"
+          },
+          "sent": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Sent",
+            "type": "array"
+          },
+          "tv": {
+            "title": "Tv",
+            "type": "string"
+          },
+          "warnings": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Warnings",
+            "type": "array"
+          }
+        },
+        "required": [
+          "tv",
+          "outcome",
+          "detail",
+          "sent",
+          "warnings"
+        ],
+        "title": "ActionResult",
+        "type": "object"
+      }
+    },
+    {
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": false,
+        "readOnlyHint": false
+      },
+      "description": "Send remote control key presses to the TV.\n\n<use_case>\nNavigate TV menus and on-screen dialogs (arrows, enter, back, home).\n</use_case>\n\n<important_notes>\n- Rate limited via token bucket (capacity 10, rate 3.0/s) to prevent runaway key flooding.\n- For media transport (play, pause, stop), prefer `webos_media_control`.\n- To type, prefer `webos_insert_text` (where get_status lists text_input) or, for YouTube,\n  `webos_search_app`. Walk an app's own on-screen keyboard with arrows and ENTER only when they refuse.\n</important_notes>\n",
+      "inputSchema": {
+        "properties": {
+          "key": {
+            "enum": [
+              "UP",
+              "DOWN",
+              "LEFT",
+              "RIGHT",
+              "ENTER",
+              "BACK",
+              "HOME",
+              "EXIT",
+              "INFO",
+              "PLAY",
+              "PAUSE",
+              "STOP",
+              "REWIND",
+              "FASTFORWARD",
+              "RED",
+              "GREEN",
+              "YELLOW",
+              "BLUE",
+              "CHANNELUP",
+              "CHANNELDOWN",
+              "0",
+              "1",
+              "2",
+              "3",
+              "4",
+              "5",
+              "6",
+              "7",
+              "8",
+              "9"
+            ],
+            "title": "Key",
+            "type": "string"
+          },
+          "repeat": {
+            "default": 1,
+            "description": "How many times to press the key (1-10).",
+            "maximum": 10,
+            "minimum": 1,
+            "title": "Repeat",
+            "type": "integer"
+          },
+          "tv": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Which TV: its name (e.g. a room), an alias, or its address. Omit when there is only one; with several, a call without it is refused rather than guessed.",
+            "title": "Tv"
+          }
+        },
+        "required": [
+          "key"
+        ],
+        "title": "webos_send_keyArguments",
+        "type": "object"
+      },
+      "name": "webos_send_key",
+      "outputSchema": {
+        "properties": {
+          "detail": {
+            "title": "Detail",
+            "type": "string"
+          },
+          "outcome": {
+            "enum": [
+              "done",
+              "unchanged",
+              "dry_run"
+            ],
+            "title": "Outcome",
+            "type": "string"
+          },
+          "sent": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Sent",
+            "type": "array"
+          },
+          "tv": {
+            "title": "Tv",
+            "type": "string"
+          },
+          "warnings": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Warnings",
+            "type": "array"
+          }
+        },
+        "required": [
+          "tv",
+          "outcome",
+          "detail",
+          "sent",
+          "warnings"
+        ],
+        "title": "ActionResult",
+        "type": "object"
+      }
+    },
+    {
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false,
+        "readOnlyHint": false
+      },
+      "description": "Mute or unmute the TV audio output.\n\n<use_case>\nSilence or restore TV audio output.\n</use_case>\n\n<important_notes>\n- When `volume_owner == 'external'`, calls are refused: use `onkyo_set_mute` on the audio receiver.\n</important_notes>\n",
+      "inputSchema": {
+        "properties": {
+          "muted": {
+            "title": "Muted",
+            "type": "boolean"
+          },
+          "tv": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Which TV: its name (e.g. a room), an alias, or its address. Omit when there is only one; with several, a call without it is refused rather than guessed.",
+            "title": "Tv"
+          }
+        },
+        "required": [
+          "muted"
+        ],
+        "title": "webos_set_muteArguments",
+        "type": "object"
+      },
+      "name": "webos_set_mute",
+      "outputSchema": {
+        "properties": {
+          "detail": {
+            "title": "Detail",
+            "type": "string"
+          },
+          "outcome": {
+            "enum": [
+              "done",
+              "unchanged",
+              "dry_run"
+            ],
+            "title": "Outcome",
+            "type": "string"
+          },
+          "sent": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Sent",
+            "type": "array"
+          },
+          "tv": {
+            "title": "Tv",
+            "type": "string"
+          },
+          "warnings": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Warnings",
+            "type": "array"
+          }
+        },
+        "required": [
+          "tv",
+          "outcome",
+          "detail",
+          "sent",
+          "warnings"
+        ],
+        "title": "ActionResult",
+        "type": "object"
+      }
+    },
+    {
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false,
+        "readOnlyHint": false
+      },
+      "description": "Turn a TV on via Wake-on-LAN or off to standby.\n\n<use_case>\nPower on a TV for playback or turn it off to standby when finished.\n</use_case>\n\n<important_notes>\n- Powering on transmits Wake-on-LAN magic packets and awaits network readiness (up to 45s).\n- Rate limited to protect internal power relays from rapid power cycles.\n- To power off all configured TVs simultaneously, pass `tv=\"all\"`.\n</important_notes>\n",
+      "inputSchema": {
+        "properties": {
+          "state": {
+            "enum": [
+              "on",
+              "off"
+            ],
+            "title": "State",
+            "type": "string"
+          },
+          "tv": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Which TV: its name (e.g. a room), an alias, or its address. Omit when there is only one; with several, a call without it is refused rather than guessed.",
+            "title": "Tv"
+          }
+        },
+        "required": [
+          "state"
+        ],
+        "title": "webos_set_powerArguments",
+        "type": "object"
+      },
+      "name": "webos_set_power",
+      "outputSchema": {
+        "properties": {
+          "detail": {
+            "title": "Detail",
+            "type": "string"
+          },
+          "outcome": {
+            "enum": [
+              "done",
+              "unchanged",
+              "dry_run"
+            ],
+            "title": "Outcome",
+            "type": "string"
+          },
+          "sent": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Sent",
+            "type": "array"
+          },
+          "tv": {
+            "title": "Tv",
+            "type": "string"
+          },
+          "warnings": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Warnings",
+            "type": "array"
+          }
+        },
+        "required": [
+          "tv",
+          "outcome",
+          "detail",
+          "sent",
+          "warnings"
+        ],
+        "title": "ActionResult",
+        "type": "object"
+      }
+    },
+    {
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false,
+        "readOnlyHint": false
+      },
+      "description": "Blank or restore the TV display panel without interrupting audio.\n\n<use_case>\nTurn off the OLED/LED panel during audio-only streaming or background music to save power and prevent panel burn-in.\n</use_case>\n\n<important_notes>\n- Audio and running applications continue uninterrupted.\n- Rate limited alongside power state modifications.\n- Check TV capabilities in `webos_get_status`; older webOS revisions may lack screen-off support.\n</important_notes>\n",
+      "inputSchema": {
+        "properties": {
+          "state": {
+            "enum": [
+              "on",
+              "off"
+            ],
+            "title": "State",
+            "type": "string"
+          },
+          "tv": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Which TV: its name (e.g. a room), an alias, or its address. Omit when there is only one; with several, a call without it is refused rather than guessed.",
+            "title": "Tv"
+          }
+        },
+        "required": [
+          "state"
+        ],
+        "title": "webos_set_screenArguments",
+        "type": "object"
+      },
+      "name": "webos_set_screen",
+      "outputSchema": {
+        "properties": {
+          "detail": {
+            "title": "Detail",
+            "type": "string"
+          },
+          "outcome": {
+            "enum": [
+              "done",
+              "unchanged",
+              "dry_run"
+            ],
+            "title": "Outcome",
+            "type": "string"
+          },
+          "sent": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Sent",
+            "type": "array"
+          },
+          "tv": {
+            "title": "Tv",
+            "type": "string"
+          },
+          "warnings": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Warnings",
+            "type": "array"
+          }
+        },
+        "required": [
+          "tv",
+          "outcome",
+          "detail",
+          "sent",
+          "warnings"
+        ],
+        "title": "ActionResult",
+        "type": "object"
+      }
+    },
+    {
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false,
+        "readOnlyHint": false
+      },
+      "description": "Set the audio volume level on the TV.\n\n<use_case>\nAdjust listening volume when using internal TV speakers.\n</use_case>\n\n<important_notes>\n- When `volume_owner == 'external'`, calls are refused: audio is routed to an\n  AVR/soundbar and `onkyo_set_volume` must be used instead.\n- Values above the TV's configured `max_volume` are safely clamped.\n</important_notes>\n",
+      "inputSchema": {
+        "properties": {
+          "level": {
+            "description": "Volume 0-100 (capped per TV by max_volume).",
+            "maximum": 100,
+            "minimum": 0,
+            "title": "Level",
+            "type": "integer"
+          },
+          "tv": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Which TV: its name (e.g. a room), an alias, or its address. Omit when there is only one; with several, a call without it is refused rather than guessed.",
+            "title": "Tv"
+          }
+        },
+        "required": [
+          "level"
+        ],
+        "title": "webos_set_volumeArguments",
+        "type": "object"
+      },
+      "name": "webos_set_volume",
+      "outputSchema": {
+        "properties": {
+          "detail": {
+            "title": "Detail",
+            "type": "string"
+          },
+          "outcome": {
+            "enum": [
+              "done",
+              "unchanged",
+              "dry_run"
+            ],
+            "title": "Outcome",
+            "type": "string"
+          },
+          "sent": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Sent",
+            "type": "array"
+          },
+          "tv": {
+            "title": "Tv",
+            "type": "string"
+          },
+          "warnings": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Warnings",
+            "type": "array"
+          }
+        },
+        "required": [
+          "tv",
+          "outcome",
+          "detail",
+          "sent",
+          "warnings"
+        ],
+        "title": "ActionResult",
+        "type": "object"
+      }
+    },
+    {
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": false,
+        "readOnlyHint": false
+      },
+      "description": "Press the keyboard's Enter in the TV's focused text field, e.g. to run a search.\n\n<use_case>\nRun the search after webos_insert_text.\n</use_case>\n\n<important_notes>\n- Same rules as `webos_insert_text`: a focused system text field only; refused otherwise.\n- Confirmed when the field gives up focus, as it does once the search runs.\n</important_notes>\n",
+      "inputSchema": {
+        "properties": {
+          "tv": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Which TV: its name (e.g. a room), an alias, or its address. Omit when there is only one; with several, a call without it is refused rather than guessed.",
+            "title": "Tv"
+          }
+        },
+        "title": "webos_submit_textArguments",
+        "type": "object"
+      },
+      "name": "webos_submit_text",
+      "outputSchema": {
+        "properties": {
+          "detail": {
+            "title": "Detail",
+            "type": "string"
+          },
+          "outcome": {
+            "enum": [
+              "done",
+              "unchanged",
+              "dry_run"
+            ],
+            "title": "Outcome",
+            "type": "string"
+          },
+          "sent": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Sent",
+            "type": "array"
+          },
+          "tv": {
+            "title": "Tv",
+            "type": "string"
+          },
+          "warnings": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Warnings",
+            "type": "array"
+          }
+        },
+        "required": [
+          "tv",
+          "outcome",
+          "detail",
+          "sent",
+          "warnings"
+        ],
+        "title": "ActionResult",
+        "type": "object"
+      }
+    }
+  ]
+}

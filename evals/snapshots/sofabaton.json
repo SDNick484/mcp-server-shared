@@ -1,0 +1,994 @@
+{
+  "commit": "1e8beb1694e8d30ae3c97b9352d652b2068e5a6b",
+  "instructions": "Controls a Sofabaton universal remote hub (X1, X1S or X2). Call sofabaton_get_status first: it gives the hub's model, the running activity, and `capabilities` and `limitations` for this hub, so you know what will work. Prefer activities: sofabaton_start_activity powers the right devices; sofabaton_power_off turns the running activity off. sofabaton_press_button sends a remote button (VOL_UP, PAUSE, ...) through the running activity; sofabaton_send_command sends a named macro, favorite or device command. MQTT features (live activity state, control while the Sofabaton app is open) exist only on the X2; on an X1/X1S, close the Sofabaton app if commands are refused.",
+  "package": "sofabaton_mcp",
+  "server": "sofabaton",
+  "tools": [
+    {
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": false,
+        "readOnlyHint": false
+      },
+      "description": "Make the physical remote beep so it can be found. Through sofabaton-x-server (any model), or on an X2\nwithout a server, directly over the hub's own protocol (SOFABATON_HUB_IP), which works only while the Sofabaton\napp is closed. The direct path has no confirmation: ask the user whether they hear it.\n",
+      "inputSchema": {
+        "properties": {},
+        "title": "sofabaton_find_remoteArguments",
+        "type": "object"
+      },
+      "name": "sofabaton_find_remote",
+      "outputSchema": {
+        "properties": {
+          "detail": {
+            "title": "Detail",
+            "type": "string"
+          },
+          "outcome": {
+            "enum": [
+              "done",
+              "unchanged",
+              "dry_run"
+            ],
+            "title": "Outcome",
+            "type": "string"
+          },
+          "sent": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Sent",
+            "type": "array"
+          },
+          "via": {
+            "enum": [
+              "server",
+              "mqtt",
+              "direct"
+            ],
+            "title": "Via",
+            "type": "string"
+          }
+        },
+        "required": [
+          "outcome",
+          "detail",
+          "via",
+          "sent"
+        ],
+        "title": "ActionResult",
+        "type": "object"
+      }
+    },
+    {
+      "annotations": {
+        "openWorldHint": false,
+        "readOnlyHint": true
+      },
+      "description": "Recent presses of remote keys bound to a Wifi Device on the hub (newest first, or oldest first with\nafter_seq). Lets a button on the remote ask for something. Comes from sofabaton-x-server's log (any model),\nor on an X2 over MQTT. If instance_id changes, the log restarted and older seqs are gone.\n",
+      "inputSchema": {
+        "properties": {
+          "after_seq": {
+            "anyOf": [
+              {
+                "minimum": 0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Only presses newer than this seq (from a previous call's last_seq).",
+            "title": "After Seq"
+          },
+          "limit": {
+            "default": 10,
+            "maximum": 50,
+            "minimum": 1,
+            "title": "Limit",
+            "type": "integer"
+          }
+        },
+        "title": "sofabaton_get_recent_pressesArguments",
+        "type": "object"
+      },
+      "name": "sofabaton_get_recent_presses",
+      "outputSchema": {
+        "$defs": {
+          "Press": {
+            "properties": {
+              "command_id": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Command Id"
+              },
+              "device_id": {
+                "title": "Device Id",
+                "type": "integer"
+              },
+              "label": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Label"
+              },
+              "press_type": {
+                "title": "Press Type",
+                "type": "string"
+              },
+              "received_at": {
+                "title": "Received At",
+                "type": "string"
+              },
+              "seq": {
+                "title": "Seq",
+                "type": "integer"
+              },
+              "transport": {
+                "title": "Transport",
+                "type": "string"
+              }
+            },
+            "required": [
+              "seq",
+              "device_id",
+              "command_id",
+              "label",
+              "press_type",
+              "transport",
+              "received_at"
+            ],
+            "title": "Press",
+            "type": "object"
+          }
+        },
+        "properties": {
+          "expired": {
+            "title": "Expired",
+            "type": "boolean"
+          },
+          "instance_id": {
+            "title": "Instance Id",
+            "type": "string"
+          },
+          "last_seq": {
+            "title": "Last Seq",
+            "type": "integer"
+          },
+          "presses": {
+            "items": {
+              "$ref": "#/$defs/Press"
+            },
+            "title": "Presses",
+            "type": "array"
+          }
+        },
+        "required": [
+          "instance_id",
+          "last_seq",
+          "expired",
+          "presses"
+        ],
+        "title": "PressPage",
+        "type": "object"
+      }
+    },
+    {
+      "annotations": {
+        "openWorldHint": false,
+        "readOnlyHint": true
+      },
+      "description": "Start here. The hub's model, running activity, and what it can do right now.\n\ncapabilities lists what works on this hub now: catalog (the sofabaton_list_* tools), activities, buttons, commands,\npresses, find_remote, hub_info, and on an X2 over MQTT live_activity_state and control_while_app_open.\nlimitations says what doesn't work and how to enable it. via is how commands would be sent: \"server\"\n(sofabaton-x-server, any model) or \"mqtt\" (X2 only). transition is non-null while an X2's power macro\nmay still be running.\n",
+      "inputSchema": {
+        "properties": {},
+        "title": "sofabaton_get_statusArguments",
+        "type": "object"
+      },
+      "name": "sofabaton_get_status",
+      "outputSchema": {
+        "$defs": {
+          "MqttState": {
+            "properties": {
+              "broker": {
+                "title": "Broker",
+                "type": "string"
+              },
+              "connected": {
+                "title": "Connected",
+                "type": "boolean"
+              },
+              "error": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Error"
+              },
+              "login_rejected": {
+                "title": "Login Rejected",
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "broker",
+              "connected",
+              "login_rejected",
+              "error"
+            ],
+            "title": "MqttState",
+            "type": "object"
+          },
+          "ServerState": {
+            "properties": {
+              "app_connected": {
+                "title": "App Connected",
+                "type": "boolean"
+              },
+              "error": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Error"
+              },
+              "hub_connected": {
+                "title": "Hub Connected",
+                "type": "boolean"
+              },
+              "hub_id": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Hub Id"
+              },
+              "mode": {
+                "anyOf": [
+                  {
+                    "enum": [
+                      "disconnected",
+                      "observe",
+                      "control"
+                    ],
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Mode"
+              },
+              "reachable": {
+                "title": "Reachable",
+                "type": "boolean"
+              },
+              "url": {
+                "title": "Url",
+                "type": "string"
+              }
+            },
+            "required": [
+              "url",
+              "hub_id",
+              "reachable",
+              "hub_connected",
+              "mode",
+              "app_connected",
+              "error"
+            ],
+            "title": "ServerState",
+            "type": "object"
+          }
+        },
+        "properties": {
+          "capabilities": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Capabilities",
+            "type": "array"
+          },
+          "firmware_outdated": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Firmware Outdated"
+          },
+          "hub_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Hub Name"
+          },
+          "limitations": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Limitations",
+            "type": "array"
+          },
+          "model": {
+            "anyOf": [
+              {
+                "enum": [
+                  "X1",
+                  "X1S",
+                  "X2"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Model"
+          },
+          "mqtt": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/MqttState"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "running_activity": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Running Activity"
+          },
+          "server": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/ServerState"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "transition": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Transition"
+          },
+          "via": {
+            "anyOf": [
+              {
+                "enum": [
+                  "server",
+                  "mqtt",
+                  "direct"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Via"
+          }
+        },
+        "required": [
+          "hub_name",
+          "model",
+          "via",
+          "running_activity",
+          "transition",
+          "capabilities",
+          "limitations",
+          "firmware_outdated",
+          "server",
+          "mqtt"
+        ],
+        "title": "Status",
+        "type": "object"
+      }
+    },
+    {
+      "annotations": {
+        "openWorldHint": false,
+        "readOnlyHint": true
+      },
+      "description": "List the activities set up on the hub, marking the running one.",
+      "inputSchema": {
+        "properties": {},
+        "title": "sofabaton_list_activitiesArguments",
+        "type": "object"
+      },
+      "name": "sofabaton_list_activities",
+      "outputSchema": {
+        "$defs": {
+          "ActivityInfo": {
+            "properties": {
+              "name": {
+                "title": "Name",
+                "type": "string"
+              },
+              "running": {
+                "title": "Running",
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "name",
+              "running"
+            ],
+            "title": "ActivityInfo",
+            "type": "object"
+          }
+        },
+        "properties": {
+          "result": {
+            "items": {
+              "$ref": "#/$defs/ActivityInfo"
+            },
+            "title": "Result",
+            "type": "array"
+          }
+        },
+        "required": [
+          "result"
+        ],
+        "title": "sofabaton_list_activitiesOutput",
+        "type": "object"
+      }
+    },
+    {
+      "annotations": {
+        "openWorldHint": false,
+        "readOnlyHint": true
+      },
+      "description": "List the named commands sofabaton_send_command accepts for an activity or device (default: the running activity).\n\nFor an activity these are its macros and favorites; for a device, its own command list. The remote's hard\nbuttons are separate: use sofabaton_press_button for those.\n",
+      "inputSchema": {
+        "properties": {
+          "target": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "An activity or device name. Omit to use the running activity.",
+            "title": "Target"
+          }
+        },
+        "title": "sofabaton_list_commandsArguments",
+        "type": "object"
+      },
+      "name": "sofabaton_list_commands",
+      "outputSchema": {
+        "$defs": {
+          "CommandInfo": {
+            "properties": {
+              "kind": {
+                "enum": [
+                  "macro",
+                  "favorite",
+                  "device"
+                ],
+                "title": "Kind",
+                "type": "string"
+              },
+              "label": {
+                "title": "Label",
+                "type": "string"
+              },
+              "via": {
+                "title": "Via",
+                "type": "string"
+              }
+            },
+            "required": [
+              "label",
+              "kind",
+              "via"
+            ],
+            "title": "CommandInfo",
+            "type": "object"
+          }
+        },
+        "properties": {
+          "commands": {
+            "items": {
+              "$ref": "#/$defs/CommandInfo"
+            },
+            "title": "Commands",
+            "type": "array"
+          },
+          "source": {
+            "title": "Source",
+            "type": "string"
+          }
+        },
+        "required": [
+          "source",
+          "commands"
+        ],
+        "title": "CommandList",
+        "type": "object"
+      }
+    },
+    {
+      "annotations": {
+        "openWorldHint": false,
+        "readOnlyHint": true
+      },
+      "description": "List the devices the hub controls.",
+      "inputSchema": {
+        "properties": {},
+        "title": "sofabaton_list_devicesArguments",
+        "type": "object"
+      },
+      "name": "sofabaton_list_devices",
+      "outputSchema": {
+        "$defs": {
+          "DeviceInfo": {
+            "properties": {
+              "brand": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Brand"
+              },
+              "device_class": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Device Class"
+              },
+              "name": {
+                "title": "Name",
+                "type": "string"
+              }
+            },
+            "required": [
+              "name",
+              "brand",
+              "device_class"
+            ],
+            "title": "DeviceInfo",
+            "type": "object"
+          }
+        },
+        "properties": {
+          "result": {
+            "items": {
+              "$ref": "#/$defs/DeviceInfo"
+            },
+            "title": "Result",
+            "type": "array"
+          }
+        },
+        "required": [
+          "result"
+        ],
+        "title": "sofabaton_list_devicesOutput",
+        "type": "object"
+      }
+    },
+    {
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false,
+        "readOnlyHint": false
+      },
+      "description": "Power off the running activity and wait until the hub confirms.",
+      "inputSchema": {
+        "properties": {},
+        "title": "sofabaton_power_offArguments",
+        "type": "object"
+      },
+      "name": "sofabaton_power_off",
+      "outputSchema": {
+        "properties": {
+          "detail": {
+            "title": "Detail",
+            "type": "string"
+          },
+          "outcome": {
+            "enum": [
+              "done",
+              "unchanged",
+              "dry_run"
+            ],
+            "title": "Outcome",
+            "type": "string"
+          },
+          "sent": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Sent",
+            "type": "array"
+          },
+          "via": {
+            "enum": [
+              "server",
+              "mqtt",
+              "direct"
+            ],
+            "title": "Via",
+            "type": "string"
+          }
+        },
+        "required": [
+          "outcome",
+          "detail",
+          "via",
+          "sent"
+        ],
+        "title": "ActionResult",
+        "type": "object"
+      }
+    },
+    {
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": false,
+        "readOnlyHint": false
+      },
+      "description": "Press one of the remote's hard buttons, e.g. VOL_UP with repeat=3, or PAUSE.\n\nSent to the running activity by default, which routes it to the device it binds that button to. Rapid\nrepeated calls are rate-limited.\n",
+      "inputSchema": {
+        "properties": {
+          "button": {
+            "enum": [
+              "UP",
+              "DOWN",
+              "LEFT",
+              "RIGHT",
+              "OK",
+              "BACK",
+              "HOME",
+              "MENU",
+              "EXIT",
+              "GUIDE",
+              "DVR",
+              "VOL_UP",
+              "VOL_DOWN",
+              "MUTE",
+              "CH_UP",
+              "CH_DOWN",
+              "PLAY",
+              "PAUSE",
+              "REW",
+              "FWD",
+              "RED",
+              "GREEN",
+              "YELLOW",
+              "BLUE",
+              "A",
+              "B",
+              "C",
+              "NUM_0",
+              "NUM_1",
+              "NUM_2",
+              "NUM_3",
+              "NUM_4",
+              "NUM_5",
+              "NUM_6",
+              "NUM_7",
+              "NUM_8",
+              "NUM_9",
+              "NUM_DASH",
+              "NUM_ENTER"
+            ],
+            "title": "Button",
+            "type": "string"
+          },
+          "delay_ms": {
+            "anyOf": [
+              {
+                "maximum": 2000,
+                "minimum": 100,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Pause between repeats (default 300 ms).",
+            "title": "Delay Ms"
+          },
+          "repeat": {
+            "default": 1,
+            "description": "How many times to press it (1-10).",
+            "maximum": 10,
+            "minimum": 1,
+            "title": "Repeat",
+            "type": "integer"
+          },
+          "target": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "An activity or device name. Omit to use the running activity.",
+            "title": "Target"
+          }
+        },
+        "required": [
+          "button"
+        ],
+        "title": "sofabaton_press_buttonArguments",
+        "type": "object"
+      },
+      "name": "sofabaton_press_button",
+      "outputSchema": {
+        "properties": {
+          "detail": {
+            "title": "Detail",
+            "type": "string"
+          },
+          "outcome": {
+            "enum": [
+              "done",
+              "unchanged",
+              "dry_run"
+            ],
+            "title": "Outcome",
+            "type": "string"
+          },
+          "sent": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Sent",
+            "type": "array"
+          },
+          "via": {
+            "enum": [
+              "server",
+              "mqtt",
+              "direct"
+            ],
+            "title": "Via",
+            "type": "string"
+          }
+        },
+        "required": [
+          "outcome",
+          "detail",
+          "via",
+          "sent"
+        ],
+        "title": "ActionResult",
+        "type": "object"
+      }
+    },
+    {
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": false,
+        "readOnlyHint": false
+      },
+      "description": "Send a named command: an activity macro or favorite, or a device command.\n\nNames come from sofabaton_list_commands.\n",
+      "inputSchema": {
+        "properties": {
+          "command": {
+            "description": "A label from sofabaton_list_commands, e.g. 'Netflix' or 'Input HDMI 2'.",
+            "title": "Command",
+            "type": "string"
+          },
+          "delay_ms": {
+            "anyOf": [
+              {
+                "maximum": 2000,
+                "minimum": 100,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Pause between repeats (default 300 ms).",
+            "title": "Delay Ms"
+          },
+          "repeat": {
+            "default": 1,
+            "description": "How many times to press it (1-10).",
+            "maximum": 10,
+            "minimum": 1,
+            "title": "Repeat",
+            "type": "integer"
+          },
+          "target": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "An activity or device name. Omit to use the running activity.",
+            "title": "Target"
+          }
+        },
+        "required": [
+          "command"
+        ],
+        "title": "sofabaton_send_commandArguments",
+        "type": "object"
+      },
+      "name": "sofabaton_send_command",
+      "outputSchema": {
+        "properties": {
+          "detail": {
+            "title": "Detail",
+            "type": "string"
+          },
+          "outcome": {
+            "enum": [
+              "done",
+              "unchanged",
+              "dry_run"
+            ],
+            "title": "Outcome",
+            "type": "string"
+          },
+          "sent": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Sent",
+            "type": "array"
+          },
+          "via": {
+            "enum": [
+              "server",
+              "mqtt",
+              "direct"
+            ],
+            "title": "Via",
+            "type": "string"
+          }
+        },
+        "required": [
+          "outcome",
+          "detail",
+          "via",
+          "sent"
+        ],
+        "title": "ActionResult",
+        "type": "object"
+      }
+    },
+    {
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false,
+        "readOnlyHint": false
+      },
+      "description": "Start an activity and wait until the hub confirms it (its power-on macro can take a while).\n\nStarting the activity that is already running does nothing (outcome 'unchanged').\n",
+      "inputSchema": {
+        "properties": {
+          "activity": {
+            "description": "Activity name from sofabaton_list_activities, e.g. 'Watch Shield'.",
+            "title": "Activity",
+            "type": "string"
+          }
+        },
+        "required": [
+          "activity"
+        ],
+        "title": "sofabaton_start_activityArguments",
+        "type": "object"
+      },
+      "name": "sofabaton_start_activity",
+      "outputSchema": {
+        "properties": {
+          "detail": {
+            "title": "Detail",
+            "type": "string"
+          },
+          "outcome": {
+            "enum": [
+              "done",
+              "unchanged",
+              "dry_run"
+            ],
+            "title": "Outcome",
+            "type": "string"
+          },
+          "sent": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Sent",
+            "type": "array"
+          },
+          "via": {
+            "enum": [
+              "server",
+              "mqtt",
+              "direct"
+            ],
+            "title": "Via",
+            "type": "string"
+          }
+        },
+        "required": [
+          "outcome",
+          "detail",
+          "via",
+          "sent"
+        ],
+        "title": "ActionResult",
+        "type": "object"
+      }
+    }
+  ]
+}

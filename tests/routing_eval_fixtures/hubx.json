@@ -1,0 +1,58 @@
+{
+  "commit": "0000000000000000000000000000000000000000",
+  "instructions": "Prefer activities over single-device commands.",
+  "package": "hubx_mcp",
+  "server": "hubx",
+  "tools": [
+    {
+      "annotations": {
+        "readOnlyHint": true
+      },
+      "description": "Report each hub's running activity.",
+      "inputSchema": {
+        "properties": {
+          "hub": {
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "name": "hubx_get_status"
+    },
+    {
+      "annotations": {
+        "destructiveHint": false,
+        "readOnlyHint": false
+      },
+      "description": "Power off a hub's devices.",
+      "inputSchema": {
+        "properties": {
+          "hub": {
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "name": "hubx_power_off"
+    },
+    {
+      "annotations": {
+        "destructiveHint": false,
+        "readOnlyHint": false
+      },
+      "description": "Start an activity on a hub.",
+      "inputSchema": {
+        "properties": {
+          "activity": {
+            "type": "string"
+          },
+          "hub": {
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "name": "hubx_start_activity"
+    }
+  ]
+}

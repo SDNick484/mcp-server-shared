@@ -1,4 +1,4 @@
-"""Command line: `python -m evals.routing_eval snapshot|run`.
+"""Command line: `python -m evals.routing_eval snapshot|run|skeleton`.
 
 Exit codes: 0 ok, 1 a baseline regression, 2 an error (an invalid case file, a missing `[eval]` extra or API
 key, an unreadable baseline, a failed snapshot, or any trial that errored). A run with both an errored trial
@@ -30,6 +30,7 @@ from evals.routing_eval.client import AnthropicClient, ModelClient
 from evals.routing_eval.report import RunMeta, render_markdown, write_json
 from evals.routing_eval.runner import BASELINE, Trial, Variant, run_all
 from evals.routing_eval.score import Verdict, aggregate, score_all
+from evals.routing_eval.skeleton import skeleton_from_harmony_dumps, write_skeleton
 from evals.routing_eval.snapshot import (
     ServerSnapshot,
     SnapshotError,
@@ -75,7 +76,7 @@ def build_parser() -> argparse.ArgumentParser:
         prog="python -m evals.routing_eval",
         description="Measure whether a model routes home theater requests to the right MCP server and tool.",
     )
-    commands = parser.add_subparsers(dest="command", required=True, metavar="{snapshot,run}")
+    commands = parser.add_subparsers(dest="command", required=True, metavar="{snapshot,run,skeleton}")
 
     snap = commands.add_parser(
         "snapshot", help="snapshot each sibling's tool list and instructions", description=_snapshot.__doc__
@@ -115,7 +116,22 @@ def build_parser() -> argparse.ArgumentParser:
     )
     run.set_defaults(handler=_run)
 
-    # Task 8: add the `skeleton` subparser here (with its own set_defaults(handler=_skeleton)) and the handler below.
+    skel = commands.add_parser(
+        "skeleton", help="write a case-file skeleton from Harmony dumps", description=_skeleton.__doc__
+    )
+    skel.add_argument(
+        "--harmony-dump",
+        nargs="+",
+        required=True,
+        type=Path,
+        metavar="FILE",
+        help="`mcp-server-harmony doctor --dump` output, one file per hub",
+    )
+    skel.add_argument(
+        "--out", type=Path, required=True, metavar="PATH", help="the case file to write (outside this repo)"
+    )
+    skel.add_argument("--force", action="store_true", help="overwrite --out if it exists")
+    skel.set_defaults(handler=_skeleton)
     return parser
 
 
@@ -319,6 +335,24 @@ def _run(args: argparse.Namespace, client: ModelClient | None) -> int:
         )
         return EXIT_ERROR
     return EXIT_REGRESSION if regressions else EXIT_OK
+
+
+# -- skeleton ---------------------------------------------------------------------------------------
+
+
+def _skeleton(args: argparse.Namespace, client: ModelClient | None) -> int:
+    """Write a case-file skeleton (the home's notes and Harmony reads) from `doctor --dump` files, to --out."""
+    try:
+        text = skeleton_from_harmony_dumps(args.harmony_dump, name=args.out.stem)
+        write_skeleton(text, args.out, force=args.force)
+    except ImportError as exc:
+        _err(f'the [eval] extra is not installed ({exc}); run: pip install -e ".[eval]"')
+        return EXIT_ERROR
+    except (ValueError, OSError) as exc:
+        _err(str(exc))
+        return EXIT_ERROR
+    print(args.out)
+    return EXIT_OK
 
 
 if __name__ == "__main__":

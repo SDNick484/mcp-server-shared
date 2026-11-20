@@ -191,7 +191,14 @@ python -m evals.routing_eval run --cases evals/cases/example-home --model <model
 # dropped by more than --tolerance (default 0.2, one trial in five):
 python -m evals.routing_eval run --cases evals/cases/example-home --model <model-id> \
     --baseline results/20261120T120000Z.json
+
+# Start a private home from Harmony: one `mcp-server-harmony doctor --dump` file per hub. It writes the
+# notes and the two Harmony reads; add the other servers and your [[case]] entries by hand:
+python -m evals.routing_eval skeleton --harmony-dump hub-1.json [hub-2.json] --out ~/private-cases/my-home.toml
 ```
+
+`skeleton` refuses an `--out` inside this repository (the file names your real devices, so it belongs
+in a private repository or a local directory) and an existing file unless you pass `--force`.
 
 The markdown report goes to stdout; the JSON (every trial with its verdict) goes to
 `results/<timestamp>.json` and its path to stderr. Exit status: `0` ok, `1` a baseline

@@ -21,8 +21,9 @@ from typing import Any
 
 import anyio
 
-from evals.routing_eval.cases import CallPattern, Case, Home, is_read
-from evals.routing_eval.client import ModelClient, ToolUse
+from evals.routing_eval.cases import Case, Home, is_read
+from evals.routing_eval.client import ModelClient
+from evals.routing_eval.score import matches
 from evals.routing_eval.snapshot import ServerSnapshot
 from evals.routing_eval.stub import Stub
 
@@ -96,22 +97,6 @@ def build_system(case: Case, snapshots: Mapping[str, ServerSnapshot], variant: V
     return "\n\n".join(parts)
 
 
-def _same(expected: Any, actual: Any) -> bool:
-    if isinstance(expected, str) and isinstance(actual, str):
-        return expected.strip().casefold() == actual.strip().casefold()
-    return bool(expected == actual)
-
-
-def _allowed(use: ToolUse, patterns: Sequence[CallPattern]) -> bool:
-    """Whether a call matches an `allow` pattern: same tool, every pattern arg present and equal (strings
-    compared after strip and casefold). The same rule Task 5's scoring uses, so the loop continues exactly
-    when the scorer would accept the call."""
-    return any(
-        p.tool == use.name and all(k in use.input and _same(v, use.input[k]) for k, v in p.args.items())
-        for p in patterns
-    )
-
-
 async def run_trial(
     client: ModelClient,
     model: str,
@@ -144,10 +129,14 @@ async def run_trial(
             break
         acting = [use for use in response.tool_uses if not is_read(use.name, home, snapshots)]
         acting_ids = {use.id for use in acting}
-        calls += [RecordedCall(use.name, dict(use.input), turn) for use in acting]
-        if acting and (
+        recorded = [RecordedCall(use.name, dict(use.input), turn) for use in acting]
+        calls += recorded
+        if recorded and (
             case.category == "routing"
-            or any(use.name in case.expect.forbid or not _allowed(use, case.expect.allow) for use in acting)
+            or any(
+                call.tool in case.expect.forbid or not any(matches(call, p) for p in case.expect.allow)
+                for call in recorded
+            )
         ):
             break
         messages.append({"role": "assistant", "content": response.raw_content})

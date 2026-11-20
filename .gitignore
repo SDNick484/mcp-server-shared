@@ -50,3 +50,6 @@ htmlcov/
 /tests/test_lookup.py
 /tests/test_tools.py
 /tests/test_tool_annotations.py
+
+# Routing eval run output
+/results/

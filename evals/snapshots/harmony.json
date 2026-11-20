@@ -1,0 +1,1335 @@
+{
+  "commit": "172c44d76d3c9b63ccf52b92f798aa02998a7d95",
+  "instructions": "Controls Logitech Harmony Hubs, usually one per TV. Call harmony_get_status first: it lists each hub by name, whether it is on, and its running activity. Prefer activities: harmony_start_activity (e.g. 'Watch Shield') powers the right devices and switches inputs; harmony_power_off turns a hub's devices off. For buttons, harmony_send_command without a device goes through the running activity. Names can be hub-qualified ('Den/Watch TV', the `ref` field of list results); pass hub only when a name exists on several hubs.",
+  "package": "harmony_mcp",
+  "server": "harmony",
+  "tools": [
+    {
+      "annotations": {
+        "openWorldHint": false,
+        "readOnlyHint": true
+      },
+      "description": "What an activity sets up, read from the hub's config; sends nothing.\n\nLists each device it involves with its expected power (on, off or unknown) and input, and which device\neach group of buttons goes to (e.g. Volume to the receiver). expected_state 'unknown' means the hub's\nconfig doesn't say: report it as unknown, don't guess. Useful to rebuild an activity on another remote.\n",
+      "inputSchema": {
+        "properties": {
+          "activity": {
+            "description": "Activity name or ref from harmony_list_activities, e.g. 'Den/Watch TV'.",
+            "title": "Activity",
+            "type": "string"
+          },
+          "hub": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Hub name from harmony_get_status. Omit to look across all hubs (needed only if a name repeats).",
+            "title": "Hub"
+          }
+        },
+        "required": [
+          "activity"
+        ],
+        "title": "harmony_describe_activityArguments",
+        "type": "object"
+      },
+      "name": "harmony_describe_activity",
+      "outputSchema": {
+        "$defs": {
+          "ButtonRoute": {
+            "properties": {
+              "commands": {
+                "items": {
+                  "type": "string"
+                },
+                "title": "Commands",
+                "type": "array"
+              },
+              "devices": {
+                "items": {
+                  "type": "string"
+                },
+                "title": "Devices",
+                "type": "array"
+              },
+              "group": {
+                "title": "Group",
+                "type": "string"
+              }
+            },
+            "required": [
+              "group",
+              "devices",
+              "commands"
+            ],
+            "title": "ButtonRoute",
+            "type": "object"
+          },
+          "ExpectedDevice": {
+            "properties": {
+              "input": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Input"
+              },
+              "manufacturer": {
+                "title": "Manufacturer",
+                "type": "string"
+              },
+              "model": {
+                "title": "Model",
+                "type": "string"
+              },
+              "name": {
+                "title": "Name",
+                "type": "string"
+              },
+              "notes": {
+                "items": {
+                  "type": "string"
+                },
+                "title": "Notes",
+                "type": "array"
+              },
+              "power": {
+                "enum": [
+                  "on",
+                  "off",
+                  "unknown"
+                ],
+                "title": "Power",
+                "type": "string"
+              }
+            },
+            "required": [
+              "name",
+              "manufacturer",
+              "model",
+              "power",
+              "input",
+              "notes"
+            ],
+            "title": "ExpectedDevice",
+            "type": "object"
+          }
+        },
+        "properties": {
+          "buttons": {
+            "items": {
+              "$ref": "#/$defs/ButtonRoute"
+            },
+            "title": "Buttons",
+            "type": "array"
+          },
+          "devices": {
+            "items": {
+              "$ref": "#/$defs/ExpectedDevice"
+            },
+            "title": "Devices",
+            "type": "array"
+          },
+          "expected_state": {
+            "enum": [
+              "hub",
+              "unknown"
+            ],
+            "title": "Expected State",
+            "type": "string"
+          },
+          "hub": {
+            "title": "Hub",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "note": {
+            "title": "Note",
+            "type": "string"
+          },
+          "ref": {
+            "title": "Ref",
+            "type": "string"
+          }
+        },
+        "required": [
+          "hub",
+          "name",
+          "ref",
+          "expected_state",
+          "devices",
+          "buttons",
+          "note"
+        ],
+        "title": "ActivityDescription",
+        "type": "object"
+      }
+    },
+    {
+      "annotations": {
+        "openWorldHint": false,
+        "readOnlyHint": true
+      },
+      "description": "What each hub's activity changed from and to, and when (newest first, or oldest first with after_seq).\n\nAnswers \"what was on at 9 last night?\", \"how long was the office TV on?\" and \"was it turned on from the\nremote?\". Each change has from_activity and to_activity (null means everything off), previous_lasted_seconds\n(how long the previous state lasted), and source: 'this_server' for a start or power off this server sent,\n'elsewhere' for anything else (the physical remote, the Harmony app, Home Assistant): the hub can't say which.\nA recording_started event is where this server began watching a hub, not a change. Nothing is recorded while\nthe server isn't running, so a time before recording_since, or between one session's last event and the next\nrecording_started, is \"not recorded\", not \"nothing happened\". noticed_late means the change was found after\na reconnect, so `at` is when it was noticed, not when it happened.\n",
+      "inputSchema": {
+        "properties": {
+          "after_seq": {
+            "anyOf": [
+              {
+                "minimum": 0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Only events newer than this seq (from a previous call's last_seq).",
+            "title": "After Seq"
+          },
+          "hub": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Hub name from harmony_get_status. Omit to look across all hubs (needed only if a name repeats).",
+            "title": "Hub"
+          },
+          "limit": {
+            "default": 20,
+            "description": "Most events to return, 1-100.",
+            "maximum": 100,
+            "minimum": 1,
+            "title": "Limit",
+            "type": "integer"
+          }
+        },
+        "title": "harmony_get_historyArguments",
+        "type": "object"
+      },
+      "name": "harmony_get_history",
+      "outputSchema": {
+        "$defs": {
+          "HistoryEvent": {
+            "properties": {
+              "at": {
+                "title": "At",
+                "type": "string"
+              },
+              "from_activity": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "From Activity"
+              },
+              "hub": {
+                "title": "Hub",
+                "type": "string"
+              },
+              "kind": {
+                "enum": [
+                  "change",
+                  "recording_started"
+                ],
+                "title": "Kind",
+                "type": "string"
+              },
+              "noticed_late": {
+                "title": "Noticed Late",
+                "type": "boolean"
+              },
+              "previous_lasted_at_least": {
+                "title": "Previous Lasted At Least",
+                "type": "boolean"
+              },
+              "previous_lasted_seconds": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Previous Lasted Seconds"
+              },
+              "seq": {
+                "title": "Seq",
+                "type": "integer"
+              },
+              "source": {
+                "anyOf": [
+                  {
+                    "enum": [
+                      "this_server",
+                      "elsewhere"
+                    ],
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Source"
+              },
+              "to_activity": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "To Activity"
+              }
+            },
+            "required": [
+              "seq",
+              "at",
+              "hub",
+              "kind",
+              "from_activity",
+              "to_activity",
+              "source",
+              "noticed_late",
+              "previous_lasted_seconds",
+              "previous_lasted_at_least"
+            ],
+            "title": "HistoryEvent",
+            "type": "object"
+          }
+        },
+        "properties": {
+          "enabled": {
+            "title": "Enabled",
+            "type": "boolean"
+          },
+          "events": {
+            "items": {
+              "$ref": "#/$defs/HistoryEvent"
+            },
+            "title": "Events",
+            "type": "array"
+          },
+          "expired": {
+            "title": "Expired",
+            "type": "boolean"
+          },
+          "hint": {
+            "title": "Hint",
+            "type": "string"
+          },
+          "last_seq": {
+            "title": "Last Seq",
+            "type": "integer"
+          },
+          "persisted": {
+            "title": "Persisted",
+            "type": "boolean"
+          },
+          "recording_since": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Recording Since"
+          },
+          "session_started": {
+            "title": "Session Started",
+            "type": "string"
+          }
+        },
+        "required": [
+          "enabled",
+          "persisted",
+          "session_started",
+          "recording_since",
+          "last_seq",
+          "expired",
+          "events"
+        ],
+        "title": "HistoryPage",
+        "type": "object"
+      }
+    },
+    {
+      "annotations": {
+        "openWorldHint": false,
+        "readOnlyHint": true
+      },
+      "description": "Start here. Lists every hub (one per TV) with whether it's reachable, on or off, and its running activity.\n\ntransition is non-null while an activity is starting or powering off; that hub's commands wait until it\nclears. dry_run true means this server reports writes instead of sending them.\n\nsleep_timer is a pending harmony_set_sleep_timer (when it fires, minutes left) or null. last_sleep_timer says how\nthe previous one ended (fired, cancelled or failed, and why): nothing else tells you when a timer fires, so\ncheck here after the time has passed.\n",
+      "inputSchema": {
+        "properties": {},
+        "title": "harmony_get_statusArguments",
+        "type": "object"
+      },
+      "name": "harmony_get_status",
+      "outputSchema": {
+        "$defs": {
+          "ActivityRef": {
+            "properties": {
+              "id": {
+                "title": "Id",
+                "type": "integer"
+              },
+              "name": {
+                "title": "Name",
+                "type": "string"
+              }
+            },
+            "required": [
+              "id",
+              "name"
+            ],
+            "title": "ActivityRef",
+            "type": "object"
+          },
+          "SleepTimerEnd": {
+            "description": "How the last sleep timer ended. Nothing can tell the model when a timer fires, so this is where it looks.",
+            "properties": {
+              "at": {
+                "title": "At",
+                "type": "string"
+              },
+              "detail": {
+                "title": "Detail",
+                "type": "string"
+              },
+              "outcome": {
+                "enum": [
+                  "fired",
+                  "cancelled",
+                  "failed"
+                ],
+                "title": "Outcome",
+                "type": "string"
+              }
+            },
+            "required": [
+              "outcome",
+              "detail",
+              "at"
+            ],
+            "title": "SleepTimerEnd",
+            "type": "object"
+          },
+          "SleepTimerInfo": {
+            "description": "A pending sleep timer. Lives in this server's memory only (see HubClient.set_sleep_timer).",
+            "properties": {
+              "fires_at": {
+                "title": "Fires At",
+                "type": "string"
+              },
+              "minutes_left": {
+                "title": "Minutes Left",
+                "type": "integer"
+              },
+              "retrying": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Retrying"
+              }
+            },
+            "required": [
+              "fires_at",
+              "minutes_left",
+              "retrying"
+            ],
+            "title": "SleepTimerInfo",
+            "type": "object"
+          },
+          "Status": {
+            "properties": {
+              "current_activity": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/ActivityRef"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "firmware": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Firmware"
+              },
+              "host": {
+                "title": "Host",
+                "type": "string"
+              },
+              "hub": {
+                "title": "Hub",
+                "type": "string"
+              },
+              "last_sleep_timer": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/SleepTimerEnd"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "power": {
+                "anyOf": [
+                  {
+                    "enum": [
+                      "on",
+                      "off"
+                    ],
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Power"
+              },
+              "reachable": {
+                "title": "Reachable",
+                "type": "boolean"
+              },
+              "sleep_timer": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/SleepTimerInfo"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "transition": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Transition"
+              }
+            },
+            "required": [
+              "hub",
+              "host",
+              "reachable",
+              "firmware",
+              "power",
+              "current_activity",
+              "transition",
+              "sleep_timer",
+              "last_sleep_timer"
+            ],
+            "title": "Status",
+            "type": "object"
+          }
+        },
+        "properties": {
+          "dry_run": {
+            "title": "Dry Run",
+            "type": "boolean"
+          },
+          "hint": {
+            "title": "Hint",
+            "type": "string"
+          },
+          "hubs": {
+            "items": {
+              "$ref": "#/$defs/Status"
+            },
+            "title": "Hubs",
+            "type": "array"
+          }
+        },
+        "required": [
+          "dry_run",
+          "hubs"
+        ],
+        "title": "HubsStatus",
+        "type": "object"
+      }
+    },
+    {
+      "annotations": {
+        "openWorldHint": false,
+        "readOnlyHint": true
+      },
+      "description": "List the activities on each hub (e.g. 'Watch Shield'), marking the running ones. Each has a ref usable\nanywhere an activity name is.",
+      "inputSchema": {
+        "properties": {
+          "hub": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Hub name from harmony_get_status. Omit to look across all hubs (needed only if a name repeats).",
+            "title": "Hub"
+          }
+        },
+        "title": "harmony_list_activitiesArguments",
+        "type": "object"
+      },
+      "name": "harmony_list_activities",
+      "outputSchema": {
+        "$defs": {
+          "ActivityInfo": {
+            "properties": {
+              "hub": {
+                "title": "Hub",
+                "type": "string"
+              },
+              "name": {
+                "title": "Name",
+                "type": "string"
+              },
+              "ref": {
+                "title": "Ref",
+                "type": "string"
+              },
+              "running": {
+                "title": "Running",
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "hub",
+              "name",
+              "ref",
+              "running"
+            ],
+            "title": "ActivityInfo",
+            "type": "object"
+          }
+        },
+        "properties": {
+          "result": {
+            "items": {
+              "$ref": "#/$defs/ActivityInfo"
+            },
+            "title": "Result",
+            "type": "array"
+          }
+        },
+        "required": [
+          "result"
+        ],
+        "title": "harmony_list_activitiesOutput",
+        "type": "object"
+      }
+    },
+    {
+      "annotations": {
+        "openWorldHint": false,
+        "readOnlyHint": true
+      },
+      "description": "List the commands harmony_send_command accepts for an activity or device (default: the running activity).\n\nEach entry says which device actually receives it. Activities expose the buttons they route; devices\nexpose everything they know.\n",
+      "inputSchema": {
+        "properties": {
+          "hub": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Hub name from harmony_get_status. Omit to look across all hubs (needed only if a name repeats).",
+            "title": "Hub"
+          },
+          "target": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Activity or device name or ref. Omit for the running activity's buttons.",
+            "title": "Target"
+          }
+        },
+        "title": "harmony_list_commandsArguments",
+        "type": "object"
+      },
+      "name": "harmony_list_commands",
+      "outputSchema": {
+        "$defs": {
+          "CommandInfo": {
+            "properties": {
+              "device": {
+                "title": "Device",
+                "type": "string"
+              },
+              "group": {
+                "title": "Group",
+                "type": "string"
+              },
+              "label": {
+                "title": "Label",
+                "type": "string"
+              },
+              "name": {
+                "title": "Name",
+                "type": "string"
+              }
+            },
+            "required": [
+              "name",
+              "label",
+              "group",
+              "device"
+            ],
+            "title": "CommandInfo",
+            "type": "object"
+          }
+        },
+        "properties": {
+          "commands": {
+            "items": {
+              "$ref": "#/$defs/CommandInfo"
+            },
+            "title": "Commands",
+            "type": "array"
+          },
+          "hub": {
+            "title": "Hub",
+            "type": "string"
+          },
+          "source": {
+            "title": "Source",
+            "type": "string"
+          }
+        },
+        "required": [
+          "hub",
+          "source",
+          "commands"
+        ],
+        "title": "CommandList",
+        "type": "object"
+      }
+    },
+    {
+      "annotations": {
+        "openWorldHint": false,
+        "readOnlyHint": true
+      },
+      "description": "List the devices each hub controls, with how many commands each knows. Use only when an activity\ndoesn't cover what you need (harmony_send_command with device).",
+      "inputSchema": {
+        "properties": {
+          "hub": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Hub name from harmony_get_status. Omit to look across all hubs (needed only if a name repeats).",
+            "title": "Hub"
+          }
+        },
+        "title": "harmony_list_devicesArguments",
+        "type": "object"
+      },
+      "name": "harmony_list_devices",
+      "outputSchema": {
+        "$defs": {
+          "DeviceInfo": {
+            "properties": {
+              "commands": {
+                "title": "Commands",
+                "type": "integer"
+              },
+              "hub": {
+                "title": "Hub",
+                "type": "string"
+              },
+              "manufacturer": {
+                "title": "Manufacturer",
+                "type": "string"
+              },
+              "model": {
+                "title": "Model",
+                "type": "string"
+              },
+              "name": {
+                "title": "Name",
+                "type": "string"
+              },
+              "ref": {
+                "title": "Ref",
+                "type": "string"
+              }
+            },
+            "required": [
+              "hub",
+              "name",
+              "ref",
+              "manufacturer",
+              "model",
+              "commands"
+            ],
+            "title": "DeviceInfo",
+            "type": "object"
+          }
+        },
+        "properties": {
+          "result": {
+            "items": {
+              "$ref": "#/$defs/DeviceInfo"
+            },
+            "title": "Result",
+            "type": "array"
+          }
+        },
+        "required": [
+          "result"
+        ],
+        "title": "harmony_list_devicesOutput",
+        "type": "object"
+      }
+    },
+    {
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false,
+        "readOnlyHint": false
+      },
+      "description": "Run a hub's power-off, turning off every device in its running activity.\n\nWith no hub and several hubs on, this asks which; hub='all' turns off every one and reports each hub\nseparately (one unreachable hub doesn't stop the others).\n\nforce=True is for a hub stuck mid-sequence (harmony_get_status shows a transition that never clears): it sends\nthe power off anyway. Use it only after a normal harmony_power_off was refused as busy. Without hub it acts on\nhubs that are on or mid-sequence; to force one that reports off, name it.\n",
+      "inputSchema": {
+        "properties": {
+          "force": {
+            "default": false,
+            "description": "Force power-off even if an activity sequence is in progress.",
+            "title": "Force",
+            "type": "boolean"
+          },
+          "hub": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Hub name, or 'all' for every hub. Omit when only one hub is on.",
+            "title": "Hub"
+          }
+        },
+        "title": "harmony_power_offArguments",
+        "type": "object"
+      },
+      "name": "harmony_power_off",
+      "outputSchema": {
+        "$defs": {
+          "ActionResult": {
+            "properties": {
+              "detail": {
+                "title": "Detail",
+                "type": "string"
+              },
+              "hub": {
+                "title": "Hub",
+                "type": "string"
+              },
+              "outcome": {
+                "enum": [
+                  "done",
+                  "unchanged",
+                  "dry_run",
+                  "error"
+                ],
+                "title": "Outcome",
+                "type": "string"
+              },
+              "sent": {
+                "items": {
+                  "type": "string"
+                },
+                "title": "Sent",
+                "type": "array"
+              }
+            },
+            "required": [
+              "hub",
+              "outcome",
+              "detail",
+              "sent"
+            ],
+            "title": "ActionResult",
+            "type": "object"
+          }
+        },
+        "properties": {
+          "results": {
+            "items": {
+              "$ref": "#/$defs/ActionResult"
+            },
+            "title": "Results",
+            "type": "array"
+          }
+        },
+        "required": [
+          "results"
+        ],
+        "title": "PowerOffResult",
+        "type": "object"
+      }
+    },
+    {
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": false,
+        "readOnlyHint": false
+      },
+      "description": "Press a button, e.g. command='VolumeUp' with repeat=3, or command='Pause'.\n\nWithout device, the running activity decides which device gets it. Names come from harmony_list_commands;\nthere is no way to send a raw IR code. Rapid repeated calls are rate-limited per hub.\n",
+      "inputSchema": {
+        "properties": {
+          "command": {
+            "description": "Command name or label from harmony_list_commands, e.g. 'VolumeUp'.",
+            "title": "Command",
+            "type": "string"
+          },
+          "delay_ms": {
+            "anyOf": [
+              {
+                "maximum": 2000,
+                "minimum": 100,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Pause between repeats (default 400 ms).",
+            "title": "Delay Ms"
+          },
+          "device": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Send straight to this device (name or ref). Omit to send through the running activity.",
+            "title": "Device"
+          },
+          "hold_ms": {
+            "default": 0,
+            "description": "Hold each press this long (a long press). 0 is a tap.",
+            "maximum": 3000,
+            "minimum": 0,
+            "title": "Hold Ms",
+            "type": "integer"
+          },
+          "hub": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Hub name from harmony_get_status. Omit to look across all hubs (needed only if a name repeats).",
+            "title": "Hub"
+          },
+          "repeat": {
+            "default": 1,
+            "description": "Presses, 1-10.",
+            "maximum": 10,
+            "minimum": 1,
+            "title": "Repeat",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "command"
+        ],
+        "title": "harmony_send_commandArguments",
+        "type": "object"
+      },
+      "name": "harmony_send_command",
+      "outputSchema": {
+        "properties": {
+          "detail": {
+            "title": "Detail",
+            "type": "string"
+          },
+          "hub": {
+            "title": "Hub",
+            "type": "string"
+          },
+          "outcome": {
+            "enum": [
+              "done",
+              "unchanged",
+              "dry_run",
+              "error"
+            ],
+            "title": "Outcome",
+            "type": "string"
+          },
+          "sent": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Sent",
+            "type": "array"
+          }
+        },
+        "required": [
+          "hub",
+          "outcome",
+          "detail",
+          "sent"
+        ],
+        "title": "ActionResult",
+        "type": "object"
+      }
+    },
+    {
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": false,
+        "readOnlyHint": false
+      },
+      "description": "Turn a hub's TV system off in `minutes` minutes (the same power-off as harmony_power_off); 0 cancels.\n\n\"Turn the bedroom TV off in 45 minutes\" is one call. A new timer replaces the one already set on that hub.\nWith no hub and several hubs on, this asks which. A hub that is off is refused.\n\nThe timer is held in this server's memory, not on the hub, and is not saved: under `serve --http` it outlives\nthe chat, but over stdio the server exits when the MCP client closes, and the timer goes with it. It is\ndropped if the hub is powered off first (by anyone); switching activities keeps it. If the hub is busy or\nunreachable when it fires, it retries for a few minutes, then gives up. Nothing notifies you when it fires:\ncheck harmony_get_status (sleep_timer while pending, last_sleep_timer afterwards).\n",
+      "inputSchema": {
+        "properties": {
+          "hub": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Hub name from harmony_get_status. Omit when only one hub is on.",
+            "title": "Hub"
+          },
+          "minutes": {
+            "description": "Minutes from now, 1-720. 0 cancels the timer.",
+            "maximum": 720,
+            "minimum": 0,
+            "title": "Minutes",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "minutes"
+        ],
+        "title": "harmony_set_sleep_timerArguments",
+        "type": "object"
+      },
+      "name": "harmony_set_sleep_timer",
+      "outputSchema": {
+        "$defs": {
+          "SleepTimerInfo": {
+            "description": "A pending sleep timer. Lives in this server's memory only (see HubClient.set_sleep_timer).",
+            "properties": {
+              "fires_at": {
+                "title": "Fires At",
+                "type": "string"
+              },
+              "minutes_left": {
+                "title": "Minutes Left",
+                "type": "integer"
+              },
+              "retrying": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Retrying"
+              }
+            },
+            "required": [
+              "fires_at",
+              "minutes_left",
+              "retrying"
+            ],
+            "title": "SleepTimerInfo",
+            "type": "object"
+          }
+        },
+        "properties": {
+          "detail": {
+            "title": "Detail",
+            "type": "string"
+          },
+          "hub": {
+            "title": "Hub",
+            "type": "string"
+          },
+          "outcome": {
+            "enum": [
+              "set",
+              "cancelled"
+            ],
+            "title": "Outcome",
+            "type": "string"
+          },
+          "sleep_timer": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/SleepTimerInfo"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "hub",
+          "outcome",
+          "detail",
+          "sleep_timer"
+        ],
+        "title": "SleepTimerResult",
+        "type": "object"
+      }
+    },
+    {
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false,
+        "readOnlyHint": false
+      },
+      "description": "Start an activity: its hub powers on the devices and sets their inputs, then this returns (a few seconds).\n\nStarting the activity that is already running does nothing (outcome 'unchanged'). Switching activities on\nthe same hub needs no harmony_power_off first.\n",
+      "inputSchema": {
+        "properties": {
+          "activity": {
+            "description": "Activity name or ref from harmony_list_activities, e.g. 'Den/Watch TV'.",
+            "title": "Activity",
+            "type": "string"
+          },
+          "hub": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Hub name from harmony_get_status. Omit to look across all hubs (needed only if a name repeats).",
+            "title": "Hub"
+          }
+        },
+        "required": [
+          "activity"
+        ],
+        "title": "harmony_start_activityArguments",
+        "type": "object"
+      },
+      "name": "harmony_start_activity",
+      "outputSchema": {
+        "properties": {
+          "detail": {
+            "title": "Detail",
+            "type": "string"
+          },
+          "hub": {
+            "title": "Hub",
+            "type": "string"
+          },
+          "outcome": {
+            "enum": [
+              "done",
+              "unchanged",
+              "dry_run",
+              "error"
+            ],
+            "title": "Outcome",
+            "type": "string"
+          },
+          "sent": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Sent",
+            "type": "array"
+          }
+        },
+        "required": [
+          "hub",
+          "outcome",
+          "detail",
+          "sent"
+        ],
+        "title": "ActionResult",
+        "type": "object"
+      }
+    },
+    {
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": false,
+        "readOnlyHint": false
+      },
+      "description": "Tune to a channel by pressing its digit buttons, e.g. channel='702', '5.1' or a favorite like 'ESPN'.\n\nThe digits go out as one sequence, refused whole if the hub is busy or rate-limited. Without device they go\nthrough the running activity, which must route the digit buttons to the tuner (an activity that doesn't says\nso; name a device that has them). Set enter=True only if the box waits for a confirm press. This presses\nbuttons like harmony_send_command does; it does not use the hub's own change-channel command.\n",
+      "inputSchema": {
+        "properties": {
+          "channel": {
+            "description": "A channel number such as 702, 5.1 or 5-1, or a favorite's name (e.g. 'ESPN').",
+            "maxLength": 40,
+            "minLength": 1,
+            "title": "Channel",
+            "type": "string"
+          },
+          "device": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Press the digits on this device (name or ref). Omit to use the running activity's buttons.",
+            "title": "Device"
+          },
+          "enter": {
+            "default": false,
+            "description": "Press the select button (OK/Enter) after the digits, for boxes that wait for it.",
+            "title": "Enter",
+            "type": "boolean"
+          },
+          "hub": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Hub name from harmony_get_status. Omit to look across all hubs (needed only if a name repeats).",
+            "title": "Hub"
+          }
+        },
+        "required": [
+          "channel"
+        ],
+        "title": "harmony_tune_channelArguments",
+        "type": "object"
+      },
+      "name": "harmony_tune_channel",
+      "outputSchema": {
+        "properties": {
+          "detail": {
+            "title": "Detail",
+            "type": "string"
+          },
+          "hub": {
+            "title": "Hub",
+            "type": "string"
+          },
+          "outcome": {
+            "enum": [
+              "done",
+              "unchanged",
+              "dry_run",
+              "error"
+            ],
+            "title": "Outcome",
+            "type": "string"
+          },
+          "sent": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Sent",
+            "type": "array"
+          }
+        },
+        "required": [
+          "hub",
+          "outcome",
+          "detail",
+          "sent"
+        ],
+        "title": "ActionResult",
+        "type": "object"
+      }
+    }
+  ]
+}

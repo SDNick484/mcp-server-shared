@@ -1,0 +1,1531 @@
+{
+  "commit": "69d8153661adc4f776cc830d3651dee599d9db1a",
+  "instructions": "Controls Onkyo/Integra AV receivers on the local network. In the home theater signal chain, the Onkyo AV Receiver acts as the Audio Switcher and Master Volume Owner: media sources (such as NVIDIA Shield TV) feed into AVR HDMI inputs (e.g. 'strm-box'), and the AVR routes video out to the display (LG webOS TV) while powering speakers directly. Always adjust volume here via onkyo_set_volume rather than on the display. Call onkyo_get_status first: it shows each receiver's zones (main, zone2, zone3) with power, volume, mute, and input. Pass `receiver` when multiple units are present, and `zone` for secondary rooms. Each receiver features one hardware network streaming player, shared by every zone whose input is 'net'.",
+  "package": "onkyo_mcp",
+  "server": "onkyo",
+  "tools": [
+    {
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": false,
+        "readOnlyHint": false
+      },
+      "description": "\n<use_case>\nSend transport playback commands (play, pause, stop, next, previous) to the network player.\n</use_case>\n<important_notes>\n- Controls the single shared network media player.\n- \"play\" resumes paused media; use `onkyo_play_station` to launch new stations.\n- Track skip availability is contingent on service rules (e.g., Pandora hourly skip quotas).\n</important_notes>\n",
+      "inputSchema": {
+        "properties": {
+          "action": {
+            "enum": [
+              "play",
+              "pause",
+              "stop",
+              "next",
+              "previous"
+            ],
+            "title": "Action",
+            "type": "string"
+          },
+          "receiver": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Which receiver: its name or IP address. Omit when there is only one; with several, a call without it is refused rather than guessed.",
+            "title": "Receiver"
+          }
+        },
+        "required": [
+          "action"
+        ],
+        "title": "onkyo_control_playbackArguments",
+        "type": "object"
+      },
+      "name": "onkyo_control_playback",
+      "outputSchema": {
+        "properties": {
+          "detail": {
+            "title": "Detail",
+            "type": "string"
+          },
+          "outcome": {
+            "enum": [
+              "done",
+              "dry_run"
+            ],
+            "title": "Outcome",
+            "type": "string"
+          },
+          "receiver": {
+            "title": "Receiver",
+            "type": "string"
+          },
+          "sent": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Sent",
+            "type": "array"
+          },
+          "warnings": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Warnings",
+            "type": "array"
+          },
+          "zone": {
+            "anyOf": [
+              {
+                "enum": [
+                  "main",
+                  "zone2",
+                  "zone3"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Zone"
+          }
+        },
+        "required": [
+          "receiver",
+          "zone",
+          "outcome",
+          "detail",
+          "sent",
+          "warnings"
+        ],
+        "title": "ActionResult",
+        "type": "object"
+      }
+    },
+    {
+      "annotations": {
+        "openWorldHint": true,
+        "readOnlyHint": true
+      },
+      "description": "\n<use_case>\nFind Onkyo, Integra, and Pioneer AV receivers on the local network.\nReturns each receiver's IP address, model, eISCP port, and MAC address.\n</use_case>\n<important_notes>\n- Broadcasts UDP packets to the LAN subnet; not needed when receivers are explicitly configured.\n- Use `onkyo_get_status` instead to query configured receivers by name.\n</important_notes>\n",
+      "inputSchema": {
+        "properties": {},
+        "title": "onkyo_discover_receiversArguments",
+        "type": "object"
+      },
+      "name": "onkyo_discover_receivers",
+      "outputSchema": {
+        "$defs": {
+          "FoundReceiver": {
+            "properties": {
+              "host": {
+                "title": "Host",
+                "type": "string"
+              },
+              "mac": {
+                "title": "Mac",
+                "type": "string"
+              },
+              "model": {
+                "title": "Model",
+                "type": "string"
+              },
+              "port": {
+                "title": "Port",
+                "type": "integer"
+              },
+              "region": {
+                "title": "Region",
+                "type": "string"
+              }
+            },
+            "required": [
+              "host",
+              "model",
+              "port",
+              "region",
+              "mac"
+            ],
+            "title": "FoundReceiver",
+            "type": "object"
+          }
+        },
+        "properties": {
+          "result": {
+            "items": {
+              "$ref": "#/$defs/FoundReceiver"
+            },
+            "title": "Result",
+            "type": "array"
+          }
+        },
+        "required": [
+          "result"
+        ],
+        "title": "onkyo_discover_receiversOutput",
+        "type": "object"
+      }
+    },
+    {
+      "annotations": {
+        "openWorldHint": false,
+        "readOnlyHint": true
+      },
+      "description": "\n<use_case>\nRetrieve metadata and playback state from the receiver's internal network player.\n</use_case>\n<important_notes>\n- Reports active service, station, track title, artist, album, and playback elapsed time.\n- Applicable to all zones configured with input=\"net\".\n- Menu on screen may differ from active playback during background browsing.\n</important_notes>\n",
+      "inputSchema": {
+        "properties": {
+          "receiver": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Which receiver: its name or IP address. Omit when there is only one; with several, a call without it is refused rather than guessed.",
+            "title": "Receiver"
+          }
+        },
+        "title": "onkyo_get_now_playingArguments",
+        "type": "object"
+      },
+      "name": "onkyo_get_now_playing",
+      "outputSchema": {
+        "properties": {
+          "album": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Album"
+          },
+          "artist": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Artist"
+          },
+          "menu": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Menu"
+          },
+          "position": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Position"
+          },
+          "receiver": {
+            "title": "Receiver",
+            "type": "string"
+          },
+          "service": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Service"
+          },
+          "state": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "State"
+          },
+          "station": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Station"
+          },
+          "title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Title"
+          }
+        },
+        "required": [
+          "receiver",
+          "service",
+          "station",
+          "menu",
+          "state",
+          "title",
+          "artist",
+          "album",
+          "position"
+        ],
+        "title": "NowPlaying",
+        "type": "object"
+      }
+    },
+    {
+      "annotations": {
+        "openWorldHint": false,
+        "readOnlyHint": true
+      },
+      "description": "\n<use_case>\nQuery the operational status of configured AV receivers and their zones (main, zone2, zone3).\n</use_case>\n<important_notes>\n- Start here before issuing control commands to inspect power, volume, input, and mute status.\n- Without `receiver`, queries every configured receiver.\n- Unreachable receivers report reachable=false alongside failure details.\n- `net_zones` identifies which zones currently share the receiver's single network audio player.\n</important_notes>\n",
+      "inputSchema": {
+        "properties": {
+          "receiver": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Which receiver: its name or IP address. Omit when there is only one; with several, a call without it is refused rather than guessed.",
+            "title": "Receiver"
+          },
+          "zone": {
+            "anyOf": [
+              {
+                "enum": [
+                  "main",
+                  "zone2",
+                  "zone3"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Only this zone. Omit for every zone the receiver has (main, and zone2/zone3 if present).",
+            "title": "Zone"
+          }
+        },
+        "title": "onkyo_get_statusArguments",
+        "type": "object"
+      },
+      "name": "onkyo_get_status",
+      "outputSchema": {
+        "$defs": {
+          "ReceiverStatus": {
+            "properties": {
+              "error": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Error"
+              },
+              "host": {
+                "title": "Host",
+                "type": "string"
+              },
+              "model": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Model"
+              },
+              "net_zones": {
+                "items": {
+                  "enum": [
+                    "main",
+                    "zone2",
+                    "zone3"
+                  ],
+                  "type": "string"
+                },
+                "title": "Net Zones",
+                "type": "array"
+              },
+              "reachable": {
+                "title": "Reachable",
+                "type": "boolean"
+              },
+              "receiver": {
+                "title": "Receiver",
+                "type": "string"
+              },
+              "zones": {
+                "items": {
+                  "$ref": "#/$defs/ZoneStatus"
+                },
+                "title": "Zones",
+                "type": "array"
+              }
+            },
+            "required": [
+              "receiver",
+              "host",
+              "model",
+              "reachable",
+              "error",
+              "zones",
+              "net_zones"
+            ],
+            "title": "ReceiverStatus",
+            "type": "object"
+          },
+          "ZoneStatus": {
+            "properties": {
+              "input": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Input"
+              },
+              "listening_mode": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Listening Mode"
+              },
+              "muted": {
+                "anyOf": [
+                  {
+                    "type": "boolean"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Muted"
+              },
+              "power": {
+                "anyOf": [
+                  {
+                    "enum": [
+                      "on",
+                      "standby"
+                    ],
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Power"
+              },
+              "volume": {
+                "anyOf": [
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Volume"
+              },
+              "volume_cap": {
+                "title": "Volume Cap",
+                "type": "number"
+              },
+              "volume_control": {
+                "title": "Volume Control",
+                "type": "boolean"
+              },
+              "zone": {
+                "enum": [
+                  "main",
+                  "zone2",
+                  "zone3"
+                ],
+                "title": "Zone",
+                "type": "string"
+              }
+            },
+            "required": [
+              "zone",
+              "power",
+              "volume",
+              "volume_cap",
+              "volume_control",
+              "muted",
+              "input",
+              "listening_mode"
+            ],
+            "title": "ZoneStatus",
+            "type": "object"
+          }
+        },
+        "properties": {
+          "dry_run": {
+            "title": "Dry Run",
+            "type": "boolean"
+          },
+          "receivers": {
+            "items": {
+              "$ref": "#/$defs/ReceiverStatus"
+            },
+            "title": "Receivers",
+            "type": "array"
+          }
+        },
+        "required": [
+          "dry_run",
+          "receivers"
+        ],
+        "title": "Status",
+        "type": "object"
+      }
+    },
+    {
+      "annotations": {
+        "openWorldHint": false,
+        "readOnlyHint": true
+      },
+      "description": "\n<use_case>\nList the available streaming network services supported and reported by the receiver.\n</use_case>\n<important_notes>\n- Entries marked `selectable: true` can be passed to `onkyo_select_net_service`.\n- Older models without self-description describe only standard services.\n</important_notes>\n",
+      "inputSchema": {
+        "properties": {
+          "receiver": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Which receiver: its name or IP address. Omit when there is only one; with several, a call without it is refused rather than guessed.",
+            "title": "Receiver"
+          }
+        },
+        "title": "onkyo_list_net_servicesArguments",
+        "type": "object"
+      },
+      "name": "onkyo_list_net_services",
+      "outputSchema": {
+        "$defs": {
+          "NetServiceInfo": {
+            "properties": {
+              "code": {
+                "title": "Code",
+                "type": "string"
+              },
+              "name": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Name"
+              },
+              "receiver_name": {
+                "title": "Receiver Name",
+                "type": "string"
+              },
+              "selectable": {
+                "title": "Selectable",
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "code",
+              "receiver_name",
+              "name",
+              "selectable"
+            ],
+            "title": "NetServiceInfo",
+            "type": "object"
+          }
+        },
+        "properties": {
+          "receiver": {
+            "title": "Receiver",
+            "type": "string"
+          },
+          "services": {
+            "items": {
+              "$ref": "#/$defs/NetServiceInfo"
+            },
+            "title": "Services",
+            "type": "array"
+          }
+        },
+        "required": [
+          "receiver",
+          "services"
+        ],
+        "title": "NetServices",
+        "type": "object"
+      }
+    },
+    {
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false,
+        "readOnlyHint": false
+      },
+      "description": "\n<use_case>\nBrowse content, station playlists, and folders within a network streaming service.\n</use_case>\n<important_notes>\n- Navigate hierarchies by supplying intermediate directory names in `folder`.\n- Playable items returned can be passed directly to `onkyo_play_station`.\n- Switching away from an active playing service will stop music unless `interrupt=True` is provided.\n</important_notes>\n",
+      "inputSchema": {
+        "properties": {
+          "folder": {
+            "default": [],
+            "description": "Folders to open from the service's top menu, in order, e.g. [\"My Presets\"] or [\"MiniDLNA Server\", \"Music\", \"Album\", \"21\"]. A distinctive part of each name is enough. Empty for the top menu.",
+            "items": {
+              "type": "string"
+            },
+            "title": "Folder",
+            "type": "array"
+          },
+          "interrupt": {
+            "default": false,
+            "description": "Browse even though it stops what another service is playing. Ask the user first; without it, this refuses rather than stop the music.",
+            "title": "Interrupt",
+            "type": "boolean"
+          },
+          "receiver": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Which receiver: its name or IP address. Omit when there is only one; with several, a call without it is refused rather than guessed.",
+            "title": "Receiver"
+          },
+          "service": {
+            "default": "pandora",
+            "enum": [
+              "pandora",
+              "spotify",
+              "deezer",
+              "tidal",
+              "amazon-music",
+              "airplay",
+              "tunein",
+              "music-server"
+            ],
+            "title": "Service",
+            "type": "string"
+          }
+        },
+        "title": "onkyo_list_stationsArguments",
+        "type": "object"
+      },
+      "name": "onkyo_list_stations",
+      "outputSchema": {
+        "properties": {
+          "folder": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Folder",
+            "type": "array"
+          },
+          "folders": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Folders",
+            "type": "array"
+          },
+          "message": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Message"
+          },
+          "playable": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Playable",
+            "type": "array"
+          },
+          "service": {
+            "title": "Service",
+            "type": "string"
+          },
+          "truncated": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Truncated"
+          }
+        },
+        "required": [
+          "service",
+          "folder",
+          "playable",
+          "folders",
+          "truncated",
+          "message"
+        ],
+        "title": "StationList",
+        "type": "object"
+      }
+    },
+    {
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false,
+        "readOnlyHint": false
+      },
+      "description": "\n<use_case>\nInitiate playback of a specific station, track, or preset from a network service.\n</use_case>\n<important_notes>\n- Station names can be discovered via `onkyo_list_stations`.\n- For nested content, supply the identical `folder` hierarchy used during browsing.\n- Audio routes to every zone currently switched to input \"net\".\n</important_notes>\n",
+      "inputSchema": {
+        "properties": {
+          "folder": {
+            "default": [],
+            "description": "Folders to open from the service's top menu, in order, e.g. [\"My Presets\"] or [\"MiniDLNA Server\", \"Music\", \"Album\", \"21\"]. A distinctive part of each name is enough. Empty for the top menu.",
+            "items": {
+              "type": "string"
+            },
+            "title": "Folder",
+            "type": "array"
+          },
+          "receiver": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Which receiver: its name or IP address. Omit when there is only one; with several, a call without it is refused rather than guessed.",
+            "title": "Receiver"
+          },
+          "service": {
+            "default": "pandora",
+            "enum": [
+              "pandora",
+              "spotify",
+              "deezer",
+              "tidal",
+              "amazon-music",
+              "airplay",
+              "tunein",
+              "music-server"
+            ],
+            "title": "Service",
+            "type": "string"
+          },
+          "station": {
+            "title": "Station",
+            "type": "string"
+          }
+        },
+        "required": [
+          "station"
+        ],
+        "title": "onkyo_play_stationArguments",
+        "type": "object"
+      },
+      "name": "onkyo_play_station",
+      "outputSchema": {
+        "properties": {
+          "detail": {
+            "title": "Detail",
+            "type": "string"
+          },
+          "outcome": {
+            "enum": [
+              "done",
+              "dry_run"
+            ],
+            "title": "Outcome",
+            "type": "string"
+          },
+          "receiver": {
+            "title": "Receiver",
+            "type": "string"
+          },
+          "sent": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Sent",
+            "type": "array"
+          },
+          "warnings": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Warnings",
+            "type": "array"
+          },
+          "zone": {
+            "anyOf": [
+              {
+                "enum": [
+                  "main",
+                  "zone2",
+                  "zone3"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Zone"
+          }
+        },
+        "required": [
+          "receiver",
+          "zone",
+          "outcome",
+          "detail",
+          "sent",
+          "warnings"
+        ],
+        "title": "ActionResult",
+        "type": "object"
+      }
+    },
+    {
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false,
+        "readOnlyHint": false
+      },
+      "description": "\n<use_case>\nSelect a streaming audio service (e.g., Pandora, Spotify, TuneIn) on the receiver's network player.\n</use_case>\n<important_notes>\n- The receiver has one network player shared across all zones whose input is set to \"net\".\n- To hear audio, set the desired zone's input to \"net\" via `onkyo_set_input`.\n- The requested service must be configured and authenticated on the receiver.\n- Call `onkyo_get_now_playing` to monitor playback after selection.\n</important_notes>\n",
+      "inputSchema": {
+        "properties": {
+          "receiver": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Which receiver: its name or IP address. Omit when there is only one; with several, a call without it is refused rather than guessed.",
+            "title": "Receiver"
+          },
+          "service": {
+            "enum": [
+              "pandora",
+              "spotify",
+              "deezer",
+              "tidal",
+              "amazon-music",
+              "airplay",
+              "tunein",
+              "music-server"
+            ],
+            "title": "Service",
+            "type": "string"
+          }
+        },
+        "required": [
+          "service"
+        ],
+        "title": "onkyo_select_net_serviceArguments",
+        "type": "object"
+      },
+      "name": "onkyo_select_net_service",
+      "outputSchema": {
+        "properties": {
+          "detail": {
+            "title": "Detail",
+            "type": "string"
+          },
+          "outcome": {
+            "enum": [
+              "done",
+              "dry_run"
+            ],
+            "title": "Outcome",
+            "type": "string"
+          },
+          "receiver": {
+            "title": "Receiver",
+            "type": "string"
+          },
+          "sent": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Sent",
+            "type": "array"
+          },
+          "warnings": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Warnings",
+            "type": "array"
+          },
+          "zone": {
+            "anyOf": [
+              {
+                "enum": [
+                  "main",
+                  "zone2",
+                  "zone3"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Zone"
+          }
+        },
+        "required": [
+          "receiver",
+          "zone",
+          "outcome",
+          "detail",
+          "sent",
+          "warnings"
+        ],
+        "title": "ActionResult",
+        "type": "object"
+      }
+    },
+    {
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false,
+        "readOnlyHint": false
+      },
+      "description": "\n<use_case>\nSwitch the active input source for an AV receiver zone.\n</use_case>\n<important_notes>\n- Names correspond to physical inputs: \"bd-dvd\", \"cbl-sat\", \"game\", \"strm-box\", \"tv\", \"net\", etc.\n- In home theater setups, streaming media devices (e.g. Shield TV) feed AVR inputs such as \"strm-box\".\n- \"same-as-main\" is valid only for zone2 and zone3.\n- Secondary zones may require being powered on prior to switching inputs.\n</important_notes>\n",
+      "inputSchema": {
+        "properties": {
+          "receiver": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Which receiver: its name or IP address. Omit when there is only one; with several, a call without it is refused rather than guessed.",
+            "title": "Receiver"
+          },
+          "source": {
+            "enum": [
+              "bd-dvd",
+              "game",
+              "cbl-sat",
+              "strm-box",
+              "pc",
+              "aux",
+              "tv",
+              "phono",
+              "cd",
+              "fm",
+              "am",
+              "net",
+              "bluetooth",
+              "same-as-main"
+            ],
+            "title": "Source",
+            "type": "string"
+          },
+          "zone": {
+            "default": "main",
+            "description": "Which zone: \"main\" is the room the receiver is in; \"zone2\" and \"zone3\" are speakers in other rooms. Not every receiver has zone3.",
+            "enum": [
+              "main",
+              "zone2",
+              "zone3"
+            ],
+            "title": "Zone",
+            "type": "string"
+          }
+        },
+        "required": [
+          "source"
+        ],
+        "title": "onkyo_set_inputArguments",
+        "type": "object"
+      },
+      "name": "onkyo_set_input",
+      "outputSchema": {
+        "properties": {
+          "detail": {
+            "title": "Detail",
+            "type": "string"
+          },
+          "outcome": {
+            "enum": [
+              "done",
+              "dry_run"
+            ],
+            "title": "Outcome",
+            "type": "string"
+          },
+          "receiver": {
+            "title": "Receiver",
+            "type": "string"
+          },
+          "sent": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Sent",
+            "type": "array"
+          },
+          "warnings": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Warnings",
+            "type": "array"
+          },
+          "zone": {
+            "anyOf": [
+              {
+                "enum": [
+                  "main",
+                  "zone2",
+                  "zone3"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Zone"
+          }
+        },
+        "required": [
+          "receiver",
+          "zone",
+          "outcome",
+          "detail",
+          "sent",
+          "warnings"
+        ],
+        "title": "ActionResult",
+        "type": "object"
+      }
+    },
+    {
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false,
+        "readOnlyHint": false
+      },
+      "description": "\n<use_case>\nSet the main zone's surround sound or listening mode.\n</use_case>\n<important_notes>\n- Applies only to the main zone (surround audio processing).\n- \"direct\" and \"pure-audio\" bypass DSP; \"dolby-surround\" and \"dts-neural-x\" upmix audio to spatial layouts.\n- Receiver may reject modes that are incompatible with the incoming audio stream.\n</important_notes>\n",
+      "inputSchema": {
+        "properties": {
+          "mode": {
+            "enum": [
+              "stereo",
+              "direct",
+              "pure-audio",
+              "all-ch-stereo",
+              "full-mono",
+              "theater-dimensional",
+              "dolby-surround",
+              "dts-neural-x",
+              "game-rpg",
+              "game-action",
+              "game-rock",
+              "game-sports"
+            ],
+            "title": "Mode",
+            "type": "string"
+          },
+          "receiver": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Which receiver: its name or IP address. Omit when there is only one; with several, a call without it is refused rather than guessed.",
+            "title": "Receiver"
+          }
+        },
+        "required": [
+          "mode"
+        ],
+        "title": "onkyo_set_listening_modeArguments",
+        "type": "object"
+      },
+      "name": "onkyo_set_listening_mode",
+      "outputSchema": {
+        "properties": {
+          "detail": {
+            "title": "Detail",
+            "type": "string"
+          },
+          "outcome": {
+            "enum": [
+              "done",
+              "dry_run"
+            ],
+            "title": "Outcome",
+            "type": "string"
+          },
+          "receiver": {
+            "title": "Receiver",
+            "type": "string"
+          },
+          "sent": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Sent",
+            "type": "array"
+          },
+          "warnings": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Warnings",
+            "type": "array"
+          },
+          "zone": {
+            "anyOf": [
+              {
+                "enum": [
+                  "main",
+                  "zone2",
+                  "zone3"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Zone"
+          }
+        },
+        "required": [
+          "receiver",
+          "zone",
+          "outcome",
+          "detail",
+          "sent",
+          "warnings"
+        ],
+        "title": "ActionResult",
+        "type": "object"
+      }
+    },
+    {
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false,
+        "readOnlyHint": false
+      },
+      "description": "\n<use_case>\nMute or unmute the audio output of an AV receiver zone.\n</use_case>\n<important_notes>\n- Defaults to the main zone; pass `zone` to mute secondary speaker zones.\n- Does not alter volume level settings, only toggles mute state.\n</important_notes>\n",
+      "inputSchema": {
+        "properties": {
+          "muted": {
+            "title": "Muted",
+            "type": "boolean"
+          },
+          "receiver": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Which receiver: its name or IP address. Omit when there is only one; with several, a call without it is refused rather than guessed.",
+            "title": "Receiver"
+          },
+          "zone": {
+            "default": "main",
+            "description": "Which zone: \"main\" is the room the receiver is in; \"zone2\" and \"zone3\" are speakers in other rooms. Not every receiver has zone3.",
+            "enum": [
+              "main",
+              "zone2",
+              "zone3"
+            ],
+            "title": "Zone",
+            "type": "string"
+          }
+        },
+        "required": [
+          "muted"
+        ],
+        "title": "onkyo_set_muteArguments",
+        "type": "object"
+      },
+      "name": "onkyo_set_mute",
+      "outputSchema": {
+        "properties": {
+          "detail": {
+            "title": "Detail",
+            "type": "string"
+          },
+          "outcome": {
+            "enum": [
+              "done",
+              "dry_run"
+            ],
+            "title": "Outcome",
+            "type": "string"
+          },
+          "receiver": {
+            "title": "Receiver",
+            "type": "string"
+          },
+          "sent": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Sent",
+            "type": "array"
+          },
+          "warnings": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Warnings",
+            "type": "array"
+          },
+          "zone": {
+            "anyOf": [
+              {
+                "enum": [
+                  "main",
+                  "zone2",
+                  "zone3"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Zone"
+          }
+        },
+        "required": [
+          "receiver",
+          "zone",
+          "outcome",
+          "detail",
+          "sent",
+          "warnings"
+        ],
+        "title": "ActionResult",
+        "type": "object"
+      }
+    },
+    {
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false,
+        "readOnlyHint": false
+      },
+      "description": "\n<use_case>\nTurn an AV receiver zone on or put it into standby.\n</use_case>\n<important_notes>\n- Defaults to the main zone; target other rooms with `zone=\"zone2\"` or `zone=\"zone3\"`.\n- Zones operate independently (e.g., zone2 can play while main is in standby).\n- Hardware relays are rate-limited to avoid physical wear; rapid cycles will be refused.\n- Some models take up to 15 seconds after power-on before accepting audio/input commands.\n</important_notes>\n",
+      "inputSchema": {
+        "properties": {
+          "receiver": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Which receiver: its name or IP address. Omit when there is only one; with several, a call without it is refused rather than guessed.",
+            "title": "Receiver"
+          },
+          "state": {
+            "enum": [
+              "on",
+              "off"
+            ],
+            "title": "State",
+            "type": "string"
+          },
+          "zone": {
+            "default": "main",
+            "description": "Which zone: \"main\" is the room the receiver is in; \"zone2\" and \"zone3\" are speakers in other rooms. Not every receiver has zone3.",
+            "enum": [
+              "main",
+              "zone2",
+              "zone3"
+            ],
+            "title": "Zone",
+            "type": "string"
+          }
+        },
+        "required": [
+          "state"
+        ],
+        "title": "onkyo_set_powerArguments",
+        "type": "object"
+      },
+      "name": "onkyo_set_power",
+      "outputSchema": {
+        "properties": {
+          "detail": {
+            "title": "Detail",
+            "type": "string"
+          },
+          "outcome": {
+            "enum": [
+              "done",
+              "dry_run"
+            ],
+            "title": "Outcome",
+            "type": "string"
+          },
+          "receiver": {
+            "title": "Receiver",
+            "type": "string"
+          },
+          "sent": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Sent",
+            "type": "array"
+          },
+          "warnings": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Warnings",
+            "type": "array"
+          },
+          "zone": {
+            "anyOf": [
+              {
+                "enum": [
+                  "main",
+                  "zone2",
+                  "zone3"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Zone"
+          }
+        },
+        "required": [
+          "receiver",
+          "zone",
+          "outcome",
+          "detail",
+          "sent",
+          "warnings"
+        ],
+        "title": "ActionResult",
+        "type": "object"
+      }
+    },
+    {
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false,
+        "readOnlyHint": false
+      },
+      "description": "\n<use_case>\nSet the volume level for a specific AV receiver zone.\n</use_case>\n<important_notes>\n- Onkyo is the master audio owner in the signal chain; use this tool rather than TV\n  volume when external speakers/AVR are used.\n- Accepts 0-100 on the front-panel scale (supports 0.5 increments on newer receivers).\n- Levels exceeding the configured zone safety cap are automatically clamped.\n- Zones feeding fixed-level amplifiers will reject volume adjustments.\n</important_notes>\n",
+      "inputSchema": {
+        "properties": {
+          "level": {
+            "description": "Volume on the front panel's 0-100 scale.",
+            "maximum": 100,
+            "minimum": 0,
+            "title": "Level",
+            "type": "number"
+          },
+          "receiver": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Which receiver: its name or IP address. Omit when there is only one; with several, a call without it is refused rather than guessed.",
+            "title": "Receiver"
+          },
+          "zone": {
+            "default": "main",
+            "description": "Which zone: \"main\" is the room the receiver is in; \"zone2\" and \"zone3\" are speakers in other rooms. Not every receiver has zone3.",
+            "enum": [
+              "main",
+              "zone2",
+              "zone3"
+            ],
+            "title": "Zone",
+            "type": "string"
+          }
+        },
+        "required": [
+          "level"
+        ],
+        "title": "onkyo_set_volumeArguments",
+        "type": "object"
+      },
+      "name": "onkyo_set_volume",
+      "outputSchema": {
+        "properties": {
+          "detail": {
+            "title": "Detail",
+            "type": "string"
+          },
+          "outcome": {
+            "enum": [
+              "done",
+              "dry_run"
+            ],
+            "title": "Outcome",
+            "type": "string"
+          },
+          "receiver": {
+            "title": "Receiver",
+            "type": "string"
+          },
+          "sent": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Sent",
+            "type": "array"
+          },
+          "warnings": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Warnings",
+            "type": "array"
+          },
+          "zone": {
+            "anyOf": [
+              {
+                "enum": [
+                  "main",
+                  "zone2",
+                  "zone3"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Zone"
+          }
+        },
+        "required": [
+          "receiver",
+          "zone",
+          "outcome",
+          "detail",
+          "sent",
+          "warnings"
+        ],
+        "title": "ActionResult",
+        "type": "object"
+      }
+    }
+  ]
+}

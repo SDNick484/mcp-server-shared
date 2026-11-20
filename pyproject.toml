@@ -24,6 +24,8 @@ Homepage = "https://github.com/SDNick484/mcp-server-shared"
 
 [project.optional-dependencies]
 dev = ["pytest>=8", "pytest-cov>=5", "anyio>=4", "hypothesis>=6", "ruff>=0.6", "mypy>=1.11", "httpx2", "pre-commit>=4"]
+# The routing eval (evals/routing_eval); CI installs it so mypy checks the real client.
+eval = ["anthropic>=2.12", "tomli-w>=1.0"]
 
 [tool.setuptools.packages.find]
 where = ["src"]
@@ -32,7 +34,7 @@ where = ["src"]
 testpaths = ["tests"]
 
 [tool.coverage.run]
-source = ["mcp_shared"]
+source = ["mcp_shared", "evals/routing_eval"]
 branch = true
 
 [tool.coverage.report]
@@ -42,7 +44,7 @@ exclude_also = ["if __name__ == .__main__.:", "pragma: no cover"]
 
 [tool.ruff]
 line-length = 120
-src = ["src", "tests"]
+src = ["src", "tests", "evals"]
 # The templates hold __PKG__, which isn't a real module (isort can't place it).
 # They're linted as rendered, in tests/, which is what every sibling runs. tests/ is
 # gitignored here, so that takes --no-respect-gitignore (see the CI workflow).
@@ -53,5 +55,5 @@ extend-exclude = ["templates"]
 select = ["E", "W", "F", "I", "UP", "B", "SIM"]
 
 [tool.mypy]
-files = ["src", "scripts"]
+files = ["src", "scripts", "evals"]
 strict = true

@@ -1,0 +1,1454 @@
+{
+  "commit": "181b11557eee1e4da74618b06ad3236a324199bf",
+  "instructions": "Controls a Batocera retro-gaming cabinet through its EmulationStation frontend: browse systems and games, see what is playing, launch or quit a game, and show messages on screen. While a RetroArch (libretro) game runs, it can also pause, save or load state, take a screenshot, or reset. In the cabinet signal chain, the Batocera PC acts as the Video and Audio Source feeding HDMI into the AV Receiver (Onkyo) or TV (LG webOS). Game launch events automatically trigger dynamic marquee artwork updates on Pixelcade LED marquees. Play session tracking automatically publishes MQTT events to Home Assistant ('batocera/now_playing'). Call batocera_get_status first. To launch a game, find its id with batocera_find_games, then call batocera_launch_game. Only one game runs at a time: batocera_quit_game ends the current one and loses unsaved progress, so confirm with the user before quitting a game someone may be playing.",
+  "package": "batocera_mcp",
+  "server": "batocera",
+  "tools": [
+    {
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false,
+        "readOnlyHint": false
+      },
+      "description": "\n<use_case>\nAdjust or mute the active RetroArch game's volume.\n</use_case>\n<important_notes>\n- action='up' / 'down' steps volume by 0.5 dB; 'mute' toggles audio mute.\n- Only affects RetroArch's internal audio output, not TV or external cabinet master amplifier.\n</important_notes>\n",
+      "inputSchema": {
+        "properties": {
+          "action": {
+            "enum": [
+              "up",
+              "down",
+              "mute"
+            ],
+            "title": "Action",
+            "type": "string"
+          }
+        },
+        "required": [
+          "action"
+        ],
+        "title": "batocera_adjust_volumeArguments",
+        "type": "object"
+      },
+      "name": "batocera_adjust_volume",
+      "outputSchema": {
+        "properties": {
+          "cabinet": {
+            "title": "Cabinet",
+            "type": "string"
+          },
+          "detail": {
+            "title": "Detail",
+            "type": "string"
+          },
+          "outcome": {
+            "enum": [
+              "done",
+              "unchanged",
+              "dry_run"
+            ],
+            "title": "Outcome",
+            "type": "string"
+          },
+          "sent": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Sent",
+            "type": "array"
+          },
+          "warnings": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Warnings",
+            "type": "array"
+          }
+        },
+        "required": [
+          "cabinet",
+          "outcome",
+          "detail",
+          "sent",
+          "warnings"
+        ],
+        "title": "ActionResult",
+        "type": "object"
+      }
+    },
+    {
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": false,
+        "readOnlyHint": false
+      },
+      "description": "\n<use_case>\nCycle the active save-state slot for RetroArch games.\n</use_case>\n<important_notes>\n- Cycles between slots 0-999 and Auto (-1).\n- batocera_save_state and batocera_load_state operate on the active slot.\n- Does not save or load any state data by itself.\n</important_notes>\n",
+      "inputSchema": {
+        "properties": {
+          "direction": {
+            "enum": [
+              "next",
+              "previous"
+            ],
+            "title": "Direction",
+            "type": "string"
+          }
+        },
+        "required": [
+          "direction"
+        ],
+        "title": "batocera_change_save_slotArguments",
+        "type": "object"
+      },
+      "name": "batocera_change_save_slot",
+      "outputSchema": {
+        "properties": {
+          "cabinet": {
+            "title": "Cabinet",
+            "type": "string"
+          },
+          "detail": {
+            "title": "Detail",
+            "type": "string"
+          },
+          "outcome": {
+            "enum": [
+              "done",
+              "unchanged",
+              "dry_run"
+            ],
+            "title": "Outcome",
+            "type": "string"
+          },
+          "sent": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Sent",
+            "type": "array"
+          },
+          "warnings": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Warnings",
+            "type": "array"
+          }
+        },
+        "required": [
+          "cabinet",
+          "outcome",
+          "detail",
+          "sent",
+          "warnings"
+        ],
+        "title": "ActionResult",
+        "type": "object"
+      }
+    },
+    {
+      "annotations": {
+        "openWorldHint": false,
+        "readOnlyHint": true
+      },
+      "description": "\n<use_case>\nSearch the cabinet's game catalog by title, system, genre, player count, or play history.\n</use_case>\n<important_notes>\n- Returns matches with 32-character game_id needed for batocera_launch_game and batocera_get_game.\n- Supports filtering by genre and players (case-insensitive substring); use offset to page past limit.\n- Supports sorting by relevance, name, most_played, most_time, recently_played, or random.\n</important_notes>\n",
+      "inputSchema": {
+        "properties": {
+          "favorites_only": {
+            "default": false,
+            "title": "Favorites Only",
+            "type": "boolean"
+          },
+          "genre": {
+            "anyOf": [
+              {
+                "maxLength": 50,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Filter by genre substring, e.g. 'Fighting', 'Platform'.",
+            "title": "Genre"
+          },
+          "limit": {
+            "default": 20,
+            "maximum": 100,
+            "minimum": 1,
+            "title": "Limit",
+            "type": "integer"
+          },
+          "offset": {
+            "default": 0,
+            "description": "Skip the first N matching games for pagination.",
+            "minimum": 0,
+            "title": "Offset",
+            "type": "integer"
+          },
+          "players": {
+            "anyOf": [
+              {
+                "maxLength": 10,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Filter by player string or count, e.g. '2', '1-2'.",
+            "title": "Players"
+          },
+          "query": {
+            "anyOf": [
+              {
+                "maxLength": 100,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Words from the game's name, e.g. 'mario world'.",
+            "title": "Query"
+          },
+          "sort": {
+            "default": "relevance",
+            "description": "relevance (best name match first), by name, play count, play time or last played, or random (a shuffled pick of the matches).",
+            "enum": [
+              "relevance",
+              "name",
+              "most_played",
+              "most_time",
+              "recently_played",
+              "random"
+            ],
+            "title": "Sort",
+            "type": "string"
+          },
+          "system": {
+            "anyOf": [
+              {
+                "maxLength": 40,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Only this system.",
+            "title": "System"
+          }
+        },
+        "title": "batocera_find_gamesArguments",
+        "type": "object"
+      },
+      "name": "batocera_find_games",
+      "outputSchema": {
+        "$defs": {
+          "Game": {
+            "properties": {
+              "developer": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Developer"
+              },
+              "favorite": {
+                "title": "Favorite",
+                "type": "boolean"
+              },
+              "genre": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Genre"
+              },
+              "id": {
+                "title": "Id",
+                "type": "string"
+              },
+              "last_played": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Last Played"
+              },
+              "name": {
+                "title": "Name",
+                "type": "string"
+              },
+              "play_count": {
+                "title": "Play Count",
+                "type": "integer"
+              },
+              "play_time_s": {
+                "title": "Play Time S",
+                "type": "integer"
+              },
+              "players": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Players"
+              },
+              "release_date": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Release Date"
+              },
+              "system": {
+                "title": "System",
+                "type": "string"
+              }
+            },
+            "required": [
+              "id",
+              "system",
+              "name",
+              "genre",
+              "players",
+              "release_date",
+              "developer",
+              "favorite",
+              "play_count",
+              "play_time_s",
+              "last_played"
+            ],
+            "title": "Game",
+            "type": "object"
+          }
+        },
+        "properties": {
+          "games": {
+            "items": {
+              "$ref": "#/$defs/Game"
+            },
+            "title": "Games",
+            "type": "array"
+          },
+          "matches": {
+            "title": "Matches",
+            "type": "integer"
+          },
+          "truncated": {
+            "title": "Truncated",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "matches",
+          "games",
+          "truncated"
+        ],
+        "title": "GameList",
+        "type": "object"
+      }
+    },
+    {
+      "annotations": {
+        "openWorldHint": false,
+        "readOnlyHint": true
+      },
+      "description": "\n<use_case>\nRetrieve full metadata for a specific game.\n</use_case>\n<important_notes>\n- Returns developer, publisher, rating, players, play count, and play time.\n- Requires system name and 32-hex game_id from batocera_find_games.\n</important_notes>\n",
+      "inputSchema": {
+        "properties": {
+          "game_id": {
+            "description": "The game's id from batocera_find_games (32 hex characters).",
+            "maxLength": 32,
+            "minLength": 32,
+            "title": "Game Id",
+            "type": "string"
+          },
+          "system": {
+            "description": "System name from batocera_list_systems, e.g. 'snes', 'mame'.",
+            "maxLength": 40,
+            "minLength": 1,
+            "title": "System",
+            "type": "string"
+          }
+        },
+        "required": [
+          "system",
+          "game_id"
+        ],
+        "title": "batocera_get_gameArguments",
+        "type": "object"
+      },
+      "name": "batocera_get_game",
+      "outputSchema": {
+        "properties": {
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "developer": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Developer"
+          },
+          "favorite": {
+            "title": "Favorite",
+            "type": "boolean"
+          },
+          "genre": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Genre"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "last_played": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Played"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "play_count": {
+            "title": "Play Count",
+            "type": "integer"
+          },
+          "play_time_s": {
+            "title": "Play Time S",
+            "type": "integer"
+          },
+          "players": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Players"
+          },
+          "publisher": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Publisher"
+          },
+          "rating": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rating"
+          },
+          "release_date": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Release Date"
+          },
+          "system": {
+            "title": "System",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "system",
+          "name",
+          "genre",
+          "players",
+          "release_date",
+          "developer",
+          "favorite",
+          "play_count",
+          "play_time_s",
+          "last_played",
+          "publisher",
+          "rating",
+          "description"
+        ],
+        "title": "GameDetails",
+        "type": "object"
+      }
+    },
+    {
+      "annotations": {
+        "openWorldHint": false,
+        "readOnlyHint": true
+      },
+      "description": "\n<use_case>\nReport whether the cabinet's EmulationStation is reachable, which game is running (if any),\nand whether EmulationStation is busy (scraping, updating).\n</use_case>\n<important_notes>\n- Start here. Reports network URL, reachability, ES version, and RetroArch play/pause state.\n- While a RetroArch game runs, retroarch reports whether it is playing or paused; null for standalone emulators.\n- dry_run true indicates actions are simulated and not sent to the cabinet.\n</important_notes>\n",
+      "inputSchema": {
+        "properties": {},
+        "title": "batocera_get_statusArguments",
+        "type": "object"
+      },
+      "name": "batocera_get_status",
+      "outputSchema": {
+        "$defs": {
+          "Game": {
+            "properties": {
+              "developer": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Developer"
+              },
+              "favorite": {
+                "title": "Favorite",
+                "type": "boolean"
+              },
+              "genre": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Genre"
+              },
+              "id": {
+                "title": "Id",
+                "type": "string"
+              },
+              "last_played": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Last Played"
+              },
+              "name": {
+                "title": "Name",
+                "type": "string"
+              },
+              "play_count": {
+                "title": "Play Count",
+                "type": "integer"
+              },
+              "play_time_s": {
+                "title": "Play Time S",
+                "type": "integer"
+              },
+              "players": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Players"
+              },
+              "release_date": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Release Date"
+              },
+              "system": {
+                "title": "System",
+                "type": "string"
+              }
+            },
+            "required": [
+              "id",
+              "system",
+              "name",
+              "genre",
+              "players",
+              "release_date",
+              "developer",
+              "favorite",
+              "play_count",
+              "play_time_s",
+              "last_played"
+            ],
+            "title": "Game",
+            "type": "object"
+          },
+          "RetroArchStatus": {
+            "properties": {
+              "game": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Game"
+              },
+              "state": {
+                "enum": [
+                  "playing",
+                  "paused",
+                  "contentless"
+                ],
+                "title": "State",
+                "type": "string"
+              },
+              "system": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "System"
+              }
+            },
+            "required": [
+              "state",
+              "system",
+              "game"
+            ],
+            "title": "RetroArchStatus",
+            "type": "object"
+          }
+        },
+        "properties": {
+          "busy": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Busy"
+          },
+          "dry_run": {
+            "title": "Dry Run",
+            "type": "boolean"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          },
+          "es_version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Es Version"
+          },
+          "reachable": {
+            "title": "Reachable",
+            "type": "boolean"
+          },
+          "retroarch": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/RetroArchStatus"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "running_game": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/Game"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "url": {
+            "title": "Url",
+            "type": "string"
+          }
+        },
+        "required": [
+          "url",
+          "dry_run",
+          "reachable",
+          "error",
+          "es_version",
+          "running_game",
+          "busy",
+          "retroarch"
+        ],
+        "title": "Status",
+        "type": "object"
+      }
+    },
+    {
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false,
+        "readOnlyHint": false
+      },
+      "description": "\n<use_case>\nLaunch a game on the arcade cabinet screen.\n</use_case>\n<important_notes>\n- Refuses if another game is already running; call batocera_quit_game first.\n- Rate-limited to prevent emulator process fork storms and audio lockups.\n- Automatically triggers Pixelcade marquee updates if connected.\n</important_notes>\n",
+      "inputSchema": {
+        "properties": {
+          "game_id": {
+            "description": "The game's id from batocera_find_games (32 hex characters).",
+            "maxLength": 32,
+            "minLength": 32,
+            "title": "Game Id",
+            "type": "string"
+          },
+          "system": {
+            "description": "System name from batocera_list_systems, e.g. 'snes', 'mame'.",
+            "maxLength": 40,
+            "minLength": 1,
+            "title": "System",
+            "type": "string"
+          }
+        },
+        "required": [
+          "system",
+          "game_id"
+        ],
+        "title": "batocera_launch_gameArguments",
+        "type": "object"
+      },
+      "name": "batocera_launch_game",
+      "outputSchema": {
+        "properties": {
+          "cabinet": {
+            "title": "Cabinet",
+            "type": "string"
+          },
+          "detail": {
+            "title": "Detail",
+            "type": "string"
+          },
+          "outcome": {
+            "enum": [
+              "done",
+              "unchanged",
+              "dry_run"
+            ],
+            "title": "Outcome",
+            "type": "string"
+          },
+          "sent": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Sent",
+            "type": "array"
+          },
+          "warnings": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Warnings",
+            "type": "array"
+          }
+        },
+        "required": [
+          "cabinet",
+          "outcome",
+          "detail",
+          "sent",
+          "warnings"
+        ],
+        "title": "ActionResult",
+        "type": "object"
+      }
+    },
+    {
+      "annotations": {
+        "openWorldHint": false,
+        "readOnlyHint": true
+      },
+      "description": "\n<use_case>\nList the game systems configured on the cabinet with ROMs.\n</use_case>\n<important_notes>\n- Returns game counts, favorites, and most played game for each system.\n- The name field (e.g. 'snes', 'mame') is used as system argument in other tools.\n</important_notes>\n",
+      "inputSchema": {
+        "properties": {},
+        "title": "batocera_list_systemsArguments",
+        "type": "object"
+      },
+      "name": "batocera_list_systems",
+      "outputSchema": {
+        "$defs": {
+          "System": {
+            "properties": {
+              "favorites": {
+                "title": "Favorites",
+                "type": "integer"
+              },
+              "full_name": {
+                "title": "Full Name",
+                "type": "string"
+              },
+              "games": {
+                "title": "Games",
+                "type": "integer"
+              },
+              "manufacturer": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Manufacturer"
+              },
+              "most_played": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Most Played"
+              },
+              "name": {
+                "title": "Name",
+                "type": "string"
+              },
+              "played_games": {
+                "title": "Played Games",
+                "type": "integer"
+              }
+            },
+            "required": [
+              "name",
+              "full_name",
+              "manufacturer",
+              "games",
+              "played_games",
+              "favorites",
+              "most_played"
+            ],
+            "title": "System",
+            "type": "object"
+          }
+        },
+        "properties": {
+          "systems": {
+            "items": {
+              "$ref": "#/$defs/System"
+            },
+            "title": "Systems",
+            "type": "array"
+          },
+          "total_games": {
+            "title": "Total Games",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "systems",
+          "total_games"
+        ],
+        "title": "SystemList",
+        "type": "object"
+      }
+    },
+    {
+      "annotations": {
+        "destructiveHint": true,
+        "idempotentHint": false,
+        "openWorldHint": false,
+        "readOnlyHint": false
+      },
+      "description": "\n<use_case>\nLoad saved state from the current RetroArch save slot.\n</use_case>\n<important_notes>\n- DESTRUCTIVE: Unsaved progress since the last save will be lost.\n- Rate-limited to prevent storage and UDP packet collision.\n</important_notes>\n",
+      "inputSchema": {
+        "properties": {},
+        "title": "batocera_load_stateArguments",
+        "type": "object"
+      },
+      "name": "batocera_load_state",
+      "outputSchema": {
+        "properties": {
+          "cabinet": {
+            "title": "Cabinet",
+            "type": "string"
+          },
+          "detail": {
+            "title": "Detail",
+            "type": "string"
+          },
+          "outcome": {
+            "enum": [
+              "done",
+              "unchanged",
+              "dry_run"
+            ],
+            "title": "Outcome",
+            "type": "string"
+          },
+          "sent": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Sent",
+            "type": "array"
+          },
+          "warnings": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Warnings",
+            "type": "array"
+          }
+        },
+        "required": [
+          "cabinet",
+          "outcome",
+          "detail",
+          "sent",
+          "warnings"
+        ],
+        "title": "ActionResult",
+        "type": "object"
+      }
+    },
+    {
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false,
+        "readOnlyHint": false
+      },
+      "description": "\n<use_case>\nPause or resume the active RetroArch game.\n</use_case>\n<important_notes>\n- Only operates when a libretro/RetroArch game core is currently running.\n- Idempotent: reports unchanged if already in the target state.\n</important_notes>\n",
+      "inputSchema": {
+        "properties": {
+          "paused": {
+            "title": "Paused",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "paused"
+        ],
+        "title": "batocera_pause_gameArguments",
+        "type": "object"
+      },
+      "name": "batocera_pause_game",
+      "outputSchema": {
+        "properties": {
+          "cabinet": {
+            "title": "Cabinet",
+            "type": "string"
+          },
+          "detail": {
+            "title": "Detail",
+            "type": "string"
+          },
+          "outcome": {
+            "enum": [
+              "done",
+              "unchanged",
+              "dry_run"
+            ],
+            "title": "Outcome",
+            "type": "string"
+          },
+          "sent": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Sent",
+            "type": "array"
+          },
+          "warnings": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Warnings",
+            "type": "array"
+          }
+        },
+        "required": [
+          "cabinet",
+          "outcome",
+          "detail",
+          "sent",
+          "warnings"
+        ],
+        "title": "ActionResult",
+        "type": "object"
+      }
+    },
+    {
+      "annotations": {
+        "destructiveHint": true,
+        "idempotentHint": false,
+        "openWorldHint": false,
+        "readOnlyHint": false
+      },
+      "description": "\n<use_case>\nTerminate the currently running game emulator and return to EmulationStation menu.\n</use_case>\n<important_notes>\n- DESTRUCTIVE: Unsaved game progress will be lost. Ask user confirmation before calling.\n- Rate-limited to protect emulator process management and display drivers.\n</important_notes>\n",
+      "inputSchema": {
+        "properties": {},
+        "title": "batocera_quit_gameArguments",
+        "type": "object"
+      },
+      "name": "batocera_quit_game",
+      "outputSchema": {
+        "properties": {
+          "cabinet": {
+            "title": "Cabinet",
+            "type": "string"
+          },
+          "detail": {
+            "title": "Detail",
+            "type": "string"
+          },
+          "outcome": {
+            "enum": [
+              "done",
+              "unchanged",
+              "dry_run"
+            ],
+            "title": "Outcome",
+            "type": "string"
+          },
+          "sent": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Sent",
+            "type": "array"
+          },
+          "warnings": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Warnings",
+            "type": "array"
+          }
+        },
+        "required": [
+          "cabinet",
+          "outcome",
+          "detail",
+          "sent",
+          "warnings"
+        ],
+        "title": "ActionResult",
+        "type": "object"
+      }
+    },
+    {
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false,
+        "readOnlyHint": false
+      },
+      "description": "\n<use_case>\nInstruct EmulationStation to rescan storage and reload game lists.\n</use_case>\n<important_notes>\n- Use after adding or removing ROM files.\n- Strictly rate-limited (1 per 60s) to prevent disk I/O thrashing and UI freezes.\n</important_notes>\n",
+      "inputSchema": {
+        "properties": {},
+        "title": "batocera_reload_gamesArguments",
+        "type": "object"
+      },
+      "name": "batocera_reload_games",
+      "outputSchema": {
+        "properties": {
+          "cabinet": {
+            "title": "Cabinet",
+            "type": "string"
+          },
+          "detail": {
+            "title": "Detail",
+            "type": "string"
+          },
+          "outcome": {
+            "enum": [
+              "done",
+              "unchanged",
+              "dry_run"
+            ],
+            "title": "Outcome",
+            "type": "string"
+          },
+          "sent": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Sent",
+            "type": "array"
+          },
+          "warnings": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Warnings",
+            "type": "array"
+          }
+        },
+        "required": [
+          "cabinet",
+          "outcome",
+          "detail",
+          "sent",
+          "warnings"
+        ],
+        "title": "ActionResult",
+        "type": "object"
+      }
+    },
+    {
+      "annotations": {
+        "destructiveHint": true,
+        "idempotentHint": false,
+        "openWorldHint": false,
+        "readOnlyHint": false
+      },
+      "description": "\n<use_case>\nSoft-reset the running RetroArch game emulator.\n</use_case>\n<important_notes>\n- DESTRUCTIVE: Like pressing the physical console reset button; unsaved progress is lost.\n- Rate-limited to avoid hardware and display strain.\n</important_notes>\n",
+      "inputSchema": {
+        "properties": {},
+        "title": "batocera_reset_gameArguments",
+        "type": "object"
+      },
+      "name": "batocera_reset_game",
+      "outputSchema": {
+        "properties": {
+          "cabinet": {
+            "title": "Cabinet",
+            "type": "string"
+          },
+          "detail": {
+            "title": "Detail",
+            "type": "string"
+          },
+          "outcome": {
+            "enum": [
+              "done",
+              "unchanged",
+              "dry_run"
+            ],
+            "title": "Outcome",
+            "type": "string"
+          },
+          "sent": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Sent",
+            "type": "array"
+          },
+          "warnings": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Warnings",
+            "type": "array"
+          }
+        },
+        "required": [
+          "cabinet",
+          "outcome",
+          "detail",
+          "sent",
+          "warnings"
+        ],
+        "title": "ActionResult",
+        "type": "object"
+      }
+    },
+    {
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": false,
+        "readOnlyHint": false
+      },
+      "description": "\n<use_case>\nSave game progress to the current RetroArch save slot.\n</use_case>\n<important_notes>\n- Overwrites the active save slot on the cabinet storage.\n- Rate-limited to prevent UDP packet storms and file corruption.\n</important_notes>\n",
+      "inputSchema": {
+        "properties": {},
+        "title": "batocera_save_stateArguments",
+        "type": "object"
+      },
+      "name": "batocera_save_state",
+      "outputSchema": {
+        "properties": {
+          "cabinet": {
+            "title": "Cabinet",
+            "type": "string"
+          },
+          "detail": {
+            "title": "Detail",
+            "type": "string"
+          },
+          "outcome": {
+            "enum": [
+              "done",
+              "unchanged",
+              "dry_run"
+            ],
+            "title": "Outcome",
+            "type": "string"
+          },
+          "sent": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Sent",
+            "type": "array"
+          },
+          "warnings": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Warnings",
+            "type": "array"
+          }
+        },
+        "required": [
+          "cabinet",
+          "outcome",
+          "detail",
+          "sent",
+          "warnings"
+        ],
+        "title": "ActionResult",
+        "type": "object"
+      }
+    },
+    {
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": false,
+        "readOnlyHint": false
+      },
+      "description": "\n<use_case>\nDisplay an on-screen notification or popup dialog on the cabinet screen.\n</use_case>\n<important_notes>\n- style='auto' displays an in-game HUD overlay if RetroArch is active, or frontend banner otherwise.\n- style='popup' halts game launch until acknowledged by a button press on the cabinet.\n</important_notes>\n",
+      "inputSchema": {
+        "properties": {
+          "style": {
+            "default": "auto",
+            "description": "auto: over the game if a RetroArch game is running, otherwise a frontend notification. popup: a frontend dialog that stays until someone presses a button.",
+            "enum": [
+              "auto",
+              "notification",
+              "popup"
+            ],
+            "title": "Style",
+            "type": "string"
+          },
+          "text": {
+            "maxLength": 300,
+            "minLength": 1,
+            "title": "Text",
+            "type": "string"
+          }
+        },
+        "required": [
+          "text"
+        ],
+        "title": "batocera_show_messageArguments",
+        "type": "object"
+      },
+      "name": "batocera_show_message",
+      "outputSchema": {
+        "properties": {
+          "cabinet": {
+            "title": "Cabinet",
+            "type": "string"
+          },
+          "detail": {
+            "title": "Detail",
+            "type": "string"
+          },
+          "outcome": {
+            "enum": [
+              "done",
+              "unchanged",
+              "dry_run"
+            ],
+            "title": "Outcome",
+            "type": "string"
+          },
+          "sent": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Sent",
+            "type": "array"
+          },
+          "warnings": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Warnings",
+            "type": "array"
+          }
+        },
+        "required": [
+          "cabinet",
+          "outcome",
+          "detail",
+          "sent",
+          "warnings"
+        ],
+        "title": "ActionResult",
+        "type": "object"
+      }
+    },
+    {
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": false,
+        "readOnlyHint": false
+      },
+      "description": "\n<use_case>\nCapture a screenshot of the currently running RetroArch game.\n</use_case>\n<important_notes>\n- Saved directly to /userdata/screenshots on the cabinet.\n- Only works while a RetroArch core is actively running.\n</important_notes>\n",
+      "inputSchema": {
+        "properties": {},
+        "title": "batocera_take_screenshotArguments",
+        "type": "object"
+      },
+      "name": "batocera_take_screenshot",
+      "outputSchema": {
+        "properties": {
+          "cabinet": {
+            "title": "Cabinet",
+            "type": "string"
+          },
+          "detail": {
+            "title": "Detail",
+            "type": "string"
+          },
+          "outcome": {
+            "enum": [
+              "done",
+              "unchanged",
+              "dry_run"
+            ],
+            "title": "Outcome",
+            "type": "string"
+          },
+          "sent": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Sent",
+            "type": "array"
+          },
+          "warnings": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Warnings",
+            "type": "array"
+          }
+        },
+        "required": [
+          "cabinet",
+          "outcome",
+          "detail",
+          "sent",
+          "warnings"
+        ],
+        "title": "ActionResult",
+        "type": "object"
+      }
+    }
+  ]
+}

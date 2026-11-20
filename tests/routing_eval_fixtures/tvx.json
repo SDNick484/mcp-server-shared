@@ -1,0 +1,99 @@
+{
+  "commit": "0000000000000000000000000000000000000000",
+  "instructions": null,
+  "package": "tvx_mcp",
+  "server": "tvx",
+  "tools": [
+    {
+      "annotations": {
+        "readOnlyHint": true
+      },
+      "description": "Report a TV's power, source and volume.",
+      "inputSchema": {
+        "properties": {
+          "tv": {
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "name": "tvx_get_status"
+    },
+    {
+      "annotations": {
+        "destructiveHint": false,
+        "readOnlyHint": false
+      },
+      "description": "Type text into the focused field.",
+      "inputSchema": {
+        "properties": {
+          "text": {
+            "type": "string"
+          },
+          "tv": {
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "name": "tvx_insert_text"
+    },
+    {
+      "annotations": {
+        "destructiveHint": false,
+        "readOnlyHint": false
+      },
+      "description": "Switch a TV's input.",
+      "inputSchema": {
+        "properties": {
+          "source": {
+            "type": "string"
+          },
+          "tv": {
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "name": "tvx_select_source"
+    },
+    {
+      "annotations": {
+        "destructiveHint": false,
+        "readOnlyHint": false
+      },
+      "description": "Turn a TV on or off.",
+      "inputSchema": {
+        "properties": {
+          "on": {
+            "type": "boolean"
+          },
+          "tv": {
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "name": "tvx_set_power"
+    },
+    {
+      "annotations": {
+        "destructiveHint": false,
+        "readOnlyHint": false
+      },
+      "description": "Set a TV's volume.",
+      "inputSchema": {
+        "properties": {
+          "level": {
+            "type": "integer"
+          },
+          "tv": {
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "name": "tvx_set_volume"
+    }
+  ]
+}

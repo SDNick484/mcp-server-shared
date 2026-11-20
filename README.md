@@ -167,6 +167,44 @@ Choices worth knowing about, and why:
   them by hand if they're unused.
 - **Exit codes:** 0 in sync, 1 drift, 2 anything else (network, a bad lock, bad arguments).
 
+## Routing eval
+
+`python -m evals.routing_eval` measures whether a model sends a home theater request to the right
+MCP server and tool, and whether instructions planted in device strings (a video title, a game
+name) make it change state. It is not a synced module: nothing here goes to the siblings. The
+design is in `docs/superpowers/specs/2026-11-17-routing-eval-design.md`.
+
+```sh
+pip install -e ".[eval]"            # the anthropic SDK and tomli-w, kept out of the dev extra
+export ANTHROPIC_API_KEY=...
+
+# Refresh the committed tool snapshots from the sibling checkouts next to this repo
+# (each needs its .venv; --only harmony,webos narrows it; tools without annotations are warned about):
+python -m evals.routing_eval snapshot
+
+# Run a case directory against one or more models (--model has no default). The baseline variant
+# always runs; each --skill adds a variant whose system prompt includes that file:
+python -m evals.routing_eval run --cases evals/cases/example-home --model <model-id> [--model <other-id>] \
+    [--skill path/to/skill.md] [--trials 5] [--with-notes] [--case 'switch-*']
+
+# Compare with an earlier run (its results JSON); exit 1 if a case or a section's pooled pass rate
+# dropped by more than --tolerance (default 0.2, one trial in five):
+python -m evals.routing_eval run --cases evals/cases/example-home --model <model-id> \
+    --baseline results/20261120T120000Z.json
+```
+
+The markdown report goes to stdout; the JSON (every trial with its verdict) goes to
+`results/<timestamp>.json` and its path to stderr. Exit status: `0` ok, `1` a baseline
+regression, `2` an error (an invalid case file, the `[eval]` extra or `ANTHROPIC_API_KEY`
+missing, an unreadable baseline, or any trial that errored, such as an API failure that survived
+the SDK's retries; the other trials still finish and the results are still written).
+
+`evals/cases/example-home/` is a fictional home with generic names (`hub-1`, `tv-1`), the model
+for your own. Real cases name real rooms and devices, so they live outside this repo (a private
+repository or a local directory; `--cases` takes any path), and `results/` is gitignored for the
+same reason: its transcripts carry whatever the cases do. The tests never touch the network: they
+drive the same code with a scripted client.
+
 ## Supply chain security
 
 1. **Immutable Commit Pinning:** Sibling repos pin `mcp-server-shared` by full 40-character commit SHA in `shared.lock`. This guarantees byte-for-byte reproducibility and prevents supply chain poisoning via mutable git branch or tag references.

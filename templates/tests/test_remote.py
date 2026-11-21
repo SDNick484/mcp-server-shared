@@ -14,6 +14,7 @@ import contextlib
 import socket
 import time
 from contextlib import asynccontextmanager
+from typing import Any
 
 import anyio
 import httpx2
@@ -23,6 +24,8 @@ from cryptography.hazmat.primitives.asymmetric import rsa
 from mcp import Client
 from mcp.client.streamable_http import streamable_http_client
 from mcp.server.mcpserver import MCPServer
+from mcp.shared.exceptions import MCPError
+from mcp.types import ElicitResult, InputRequiredResult
 
 from __PKG__ import remote  # the only line that differs between repos
 
@@ -484,7 +487,7 @@ async def test_admitted_service_token_gets_in_over_http():
 
 # --- per-tool authorization over HTTP -----------------------------------------------
 def tiered_server(ran: list[str]) -> MCPServer:
-    m = MCPServer("tiered")
+    m = MCPServer("tiered", request_state_security=remote.request_state_security())
 
     @m.tool()
     @remote.tier("read")
@@ -647,6 +650,62 @@ async def test_person_refusal_logged_with_masked_email(caplog, protocol):
         assert (await c.call_tool("update", {})).is_error
     messages = [r.getMessage() for r in caplog.records if r.name == remote.__name__ and "refused" in r.getMessage()]
     assert messages and all("u***@example.com" in m and "user@example.com" not in m for m in messages)
+
+
+def http_client(base: str, jwt_token: str, **kwargs: Any) -> Client:
+    transport = streamable_http_client(
+        f"{base}/thing/mcp", http_client=httpx2.AsyncClient(headers={remote.ACCESS_HEADER: jwt_token})
+    )
+    return Client(transport, **kwargs)
+
+
+async def say_yes(context: Any, params: Any) -> ElicitResult:
+    return ElicitResult(action="accept", content={"confirm": True})
+
+
+@pytest.mark.anyio
+async def test_a_person_over_http_confirms_a_costly_call(protocol):
+    ran: list[str] = []
+    async with (
+        running(automation_cfg(), [], server=tiered_server(ran)) as base,
+        http_client(base, token(), mode=protocol, elicitation_callback=say_yes) as c,
+    ):
+        assert (await c.call_tool("update", {})).content[0].text == "updated"
+        # A second, fresh yes to the very same call is its own confirmation, not a replay.
+        assert (await c.call_tool("update", {})).content[0].text == "updated"
+    assert ran == ["update", "update"]
+
+
+@pytest.mark.anyio
+async def test_sealed_confirmation_bound_to_caller(caplog):
+    """Review Focus 3: person A's sealed state, answered and re-sent with person B's JWT, is rejected."""
+    ran: list[str] = []
+    async with running(automation_cfg(), [], server=tiered_server(ran)) as base:
+        a = http_client(base, token(email="user@example.com"), mode="2026-07-28", elicitation_callback=say_yes)
+        b = http_client(base, token(email="other@example.com"), mode="2026-07-28", elicitation_callback=say_yes)
+        async with a, b:
+            first = await a.session.call_tool("update", {}, allow_input_required=True)
+            assert isinstance(first, InputRequiredResult)
+            (key,) = first.input_requests
+            yes = {key: ElicitResult(action="accept", content={"confirm": True})}
+            with pytest.raises(MCPError, match="Invalid or expired requestState"):
+                await b.session.call_tool(
+                    "update", {}, input_responses=yes, request_state=first.request_state, allow_input_required=True
+                )
+            assert ran == []
+            # The same answer from the person it was asked of still runs it.
+            done = await a.session.call_tool(
+                "update", {}, input_responses=yes, request_state=first.request_state, allow_input_required=True
+            )
+            assert done.content[0].text == "updated"
+    assert ran == ["update"]
+    assert any("requestState rejected" in r.getMessage() and "principal" in r.getMessage() for r in caplog.records)
+
+
+def test_request_state_security_ttl_is_120():
+    security = remote.request_state_security()
+    assert security.ttl == 120 == remote.CONFIRM_TIMEOUT
+    assert security.bind_principal is remote.caller_principal
 
 
 @pytest.mark.anyio

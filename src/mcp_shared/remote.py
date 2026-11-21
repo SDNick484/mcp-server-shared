@@ -65,7 +65,9 @@ after it, uvicorn closes what's left and runs the lifespan shutdown.
 from __future__ import annotations
 
 import argparse
+import contextvars
 import functools
+import hashlib
 import inspect
 import ipaddress
 import json
@@ -80,12 +82,15 @@ from typing import Annotated, Any, Literal, TypeVar, cast
 
 import anyio
 import jwt
-from mcp.server.elicitation import AcceptedElicitation, ElicitationResult
+from mcp.server.context import ServerRequestContext
+from mcp.server.elicitation import AcceptedElicitation, CancelledElicitation, DeclinedElicitation, ElicitationResult
 from mcp.server.mcpserver import Context, MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
-from mcp.server.mcpserver.resolve import Resolve, find_resolved_parameters
+from mcp.server.mcpserver.resolve import Elicit, Resolve, find_resolved_parameters
 from mcp.server.mcpserver.utilities.context_injection import find_context_parameter
+from mcp.server.request_state import AESGCMRequestStateCodec, RequestStateSecurity
 from mcp.server.transport_security import TransportSecuritySettings
+from mcp_types.version import is_version_at_least
 from pydantic import BaseModel, Field
 from starlette.types import ASGIApp, Receive, Scope, Send
 
@@ -407,8 +412,10 @@ class AccessVerifier:
 # one hidden keyword-only parameter, filled by the SDK's resolver machinery (Resolve) before the
 # tool body runs and left out of the tool's input schema. The resolver reads the caller from the
 # HTTP request the SDK exposes on the tool's Context (AccessMiddleware put it in the ASGI scope),
-# decides the tier, and refuses what the caller may not do. A contextvar set in the middleware
-# would not do: a Streamable HTTP session runs in its own long-lived task.
+# decides the tier, and refuses what the caller may not do. A costly call asks the person first
+# (an Elicit on 2026-07-28, ctx.elicit under CONFIRM_TIMEOUT before that), and a second resolver
+# turns the answer into a go-ahead or a refusal. A contextvar set in the middleware would not do
+# for the caller: a Streamable HTTP session runs in its own long-lived task.
 
 TierFn = Callable[[Mapping[str, Any]], Tier]
 F = TypeVar("F", bound=Callable[..., Any])
@@ -417,6 +424,14 @@ TIER_ATTR = "__mcp_tier__"
 # The hidden parameter @tier adds, and the name its resolver takes the Context under.
 AUTHORIZED_PARAM = "tier_authorized"
 _CTX_PARAM = "_tier_ctx"  # a resolver parameter, not a tool one, so the SDK allows the underscore
+_ASKED_PARAM = "_tier_asked"  # the second resolver's parameter that takes the first one's outcome
+# Seconds a person has to answer a costly call's prompt, and how long its sealed request state lasts.
+CONFIRM_TIMEOUT = 120
+# The first protocol revision that asks through an InputRequiredResult instead of a request mid-call.
+_INPUT_REQUIRED_VERSION = "2026-07-28"
+CANT_ASK = "This needs your confirmation, and this app can't ask for it. Run it from Claude Code."
+NOT_CONFIRMED = "Not confirmed; nothing was done."
+ALREADY_USED = "This confirmation was already used."
 
 
 class Confirmation(BaseModel):
@@ -495,8 +510,11 @@ def caller_of(ctx: Context[Any, Any]) -> Caller:
         request = ctx.request_context.request
     except ValueError:  # Context.request_context: no request context at all
         return LOCAL
-    if request is None:
-        return LOCAL
+    return LOCAL if request is None else _caller_in(request)
+
+
+def _caller_in(request: Any) -> Caller:
+    """The ``Caller`` ``AccessMiddleware`` left in an HTTP request's scope; refuse if there is none."""
     scope = getattr(request, "scope", None)
     state = scope.get("state") if isinstance(scope, Mapping) else None
     caller = state.get(CALLER_STATE_KEY) if isinstance(state, Mapping) else None
@@ -528,18 +546,178 @@ async def _authorize(spec: TierSpec, tool: str, ctx: Context[Any, Any], args: Ma
         allowed = ", ".join(t for t in TIERS if t in caller.tiers) or "nothing"
         _log_outcome(caller, tool, level, "refused")
         raise ToolError(f"This tool needs a person; automated callers may only use: {allowed}.")
-    if level == "costly":
-        # Asking the person comes with confirmations (Task 3); until then a costly call never runs.
-        _log_outcome(caller, tool, level, "refused (not confirmed)")
-        raise ToolError("Not confirmed; nothing was done.")
+    if level != "costly":
+        return Allowed()
+    # Only a person or a local caller gets here: automated callers never have costly in their tiers.
+    if not spec.confirm:
+        # A function-form tier that says costly, with no sentence to ask with: never asks, never runs.
+        _log_outcome(caller, tool, level, "refused (costly, but no confirm sentence to ask with)")
+        raise ToolError(NOT_CONFIRMED)
+    if not _can_ask(ctx):
+        # Never fall back to anything the model could answer for the person.
+        _log_outcome(caller, tool, level, "refused (this app can't ask)")
+        raise ToolError(CANT_ASK)
+    arguments = json.dumps(dict(args), sort_keys=True, separators=(",", ":"), ensure_ascii=False, default=str)
+    prompt = f"{spec.confirm}\n\nServer: {ctx.mcp_server.name} · Tool: {tool} · Arguments: {arguments}"
+    if _asks_by_input_required(ctx):
+        # The SDK sends this inside an InputRequiredResult and gives _confirmed the answer from the retry.
+        return Elicit(prompt, Confirmation)
+    # The older revisions ask mid-call; nobody answering must not hold the call (and session) forever.
+    try:
+        with anyio.fail_after(CONFIRM_TIMEOUT):
+            return await ctx.elicit(prompt, Confirmation)
+    except TimeoutError:
+        return _TimedOut()
+
+
+@dataclass(frozen=True)
+class _TimedOut:
+    """The older revisions' prompt went unanswered for ``CONFIRM_TIMEOUT`` seconds."""
+
+
+def _can_ask(ctx: Context[Any, Any]) -> bool:
+    """Whether the client declared form elicitation (a bare ``elicitation: {}`` counts, as in the SDK)."""
+    try:
+        capabilities = ctx.client_capabilities
+    except ValueError:  # no request at all (MCPServer.call_tool): nobody to ask
+        return False
+    elicitation = capabilities.elicitation if capabilities is not None else None
+    return elicitation is not None and (elicitation.form is not None or elicitation.url is None)
+
+
+def _asks_by_input_required(ctx: Context[Any, Any]) -> bool:
+    """The same test the SDK's resolver machinery makes to pick how it asks."""
+    version = ctx.protocol_version
+    return version is not None and is_version_at_least(version, _INPUT_REQUIRED_VERSION)
+
+
+async def _confirmed(tool: str, ctx: Context[Any, Any], asked: Any) -> Allowed:
+    """The second resolver: turn ``_authorize``'s outcome into ``Allowed()`` or a refusal.
+
+    Separate from ``_authorize`` because on 2026-07-28 the answer arrives after ``_authorize``
+    returned its ``Elicit``: the SDK fills it in here, from the retry. The outcome comes in two
+    shapes: as is (an ``Elicit`` answered, or ``Allowed`` wrapped as accepted), or, on the older
+    revisions, ``_authorize``'s own ``ctx.elicit`` outcome wrapped once more as an accepted value.
+    """
+    answer = asked
+    if isinstance(answer, AcceptedElicitation) and isinstance(
+        answer.data, AcceptedElicitation | DeclinedElicitation | CancelledElicitation | _TimedOut
+    ):
+        answer = answer.data
+    if isinstance(answer, AcceptedElicitation) and isinstance(answer.data, Allowed):
+        return answer.data
+    caller, level = caller_of(ctx), "costly"  # only a costly call asks
+    if isinstance(answer, _TimedOut):
+        _log_outcome(caller, tool, level, f"timed out after {CONFIRM_TIMEOUT} s; refused")
+        raise ToolError(NOT_CONFIRMED)
+    if isinstance(answer, CancelledElicitation):
+        _log_outcome(caller, tool, level, "cancelled; refused")
+        raise ToolError(NOT_CONFIRMED)
+    if not (isinstance(answer, AcceptedElicitation) and isinstance(answer.data, Confirmation)):
+        _log_outcome(caller, tool, level, "declined; refused")
+        raise ToolError(NOT_CONFIRMED)
+    if answer.data.confirm is not True:
+        _log_outcome(caller, tool, level, "declined (answered no); refused")
+        raise ToolError(NOT_CONFIRMED)
+    if _asks_by_input_required(ctx):
+        # The answer came in a retry anyone holding it could send again: one yes runs once.
+        try:
+            _remember_confirmation(_confirmation_key(ctx, caller))
+        except ToolError:
+            _log_outcome(caller, tool, level, "replayed; refused")
+            raise
+    _log_outcome(caller, tool, level, "confirmed")
     return Allowed()
 
 
+# --- one yes, one run (2026-07-28) -----------------------------------------------------------
+# An answered retry is a request anyone holding it can send again within the sealed state's TTL.
+# The SDK checks the state's seal, expiry, tool, arguments and caller, but keeps no record of use,
+# so a used confirmation is remembered here until its state would have expired anyway.
+_used_confirmations: dict[str, float] = {}
+# The digest of the sealed token this request carried, and the plaintext it unsealed to, set by
+# _RecordingCodec when the SDK unseals it (in this request's own context, before any handler).
+_unsealed: contextvars.ContextVar[tuple[str, str] | None] = contextvars.ContextVar("mcp_unsealed", default=None)
+
+
+def _remember_confirmation(key: str) -> None:
+    """Record ``key`` as used, or raise ``ToolError`` if it already was (and hasn't expired)."""
+    now = time.monotonic()
+    for old in [k for k, expires in _used_confirmations.items() if expires <= now]:
+        del _used_confirmations[old]
+    if key in _used_confirmations:
+        raise ToolError(ALREADY_USED)
+    _used_confirmations[key] = now + CONFIRM_TIMEOUT
+
+
+def _confirmation_key(ctx: Context[Any, Any], caller: Caller) -> str:
+    """What identifies this confirmation: the sealed token it came back in.
+
+    The plaintext ``ctx.request_state`` is the same for every prompt for the same call (same tool,
+    same arguments), so keyed on that alone a second, fresh yes within the TTL would read as a
+    replay. Each sealed token is unique (a random nonce), so with ``request_state_security()``
+    installed that is the key. Under another policy (the SDK's default) the plaintext and the
+    caller are: still one run per yes, but one confirmed run per caller and call per TTL.
+    """
+    state = ctx.request_state or ""
+    unsealed = _unsealed.get()
+    if unsealed is not None and unsealed[0] == state:
+        return f"sealed:{unsealed[1]}"
+    plain = f"{caller.kind}:{caller.ident}\n{state}"
+    return "plain:" + hashlib.sha256(plain.encode("utf-8", "surrogatepass")).hexdigest()
+
+
+class _RecordingCodec:
+    """The SDK's AES-GCM codec, noting which sealed token each request's state came in."""
+
+    def __init__(self, inner: AESGCMRequestStateCodec) -> None:
+        self._inner = inner
+
+    def seal(self, payload: bytes) -> str:
+        return self._inner.seal(payload)
+
+    def unseal(self, token: str) -> bytes:
+        payload = self._inner.unseal(token)
+        try:
+            inner = json.loads(payload)["s"]  # the SDK's envelope: the handler's state is under "s"
+        except (ValueError, KeyError, TypeError):
+            inner = None
+        if isinstance(inner, str):
+            _unsealed.set((inner, hashlib.sha256(token.encode()).hexdigest()))
+        return payload
+
+
+def caller_principal(ctx: ServerRequestContext[Any, Any]) -> str | None:
+    """Who sealed request state belongs to: ``"<kind>:<ident>"`` of the request's ``Caller``.
+
+    ``None`` with no HTTP request (stdio, the in-process client): nothing to bind to. An HTTP
+    request without a ``Caller`` raises, which the SDK turns into a refusal (it fails closed).
+    """
+    if ctx.request is None:
+        return None
+    caller = _caller_in(ctx.request)
+    return f"{caller.kind}:{caller.ident}"
+
+
+def request_state_security() -> RequestStateSecurity:
+    """The request-state policy every sibling passes to ``MCPServer(..., request_state_security=...)``.
+
+    A process-local key (as ``RequestStateSecurity.ephemeral()`` makes), state that expires with
+    the prompt (``CONFIRM_TIMEOUT``), bound to the caller who was asked (``caller_principal``): a
+    person's sealed yes re-sent in another person's request is rejected by the SDK.
+    """
+    return RequestStateSecurity(
+        codec=_RecordingCodec(AESGCMRequestStateCodec([os.urandom(32)])),
+        ttl=CONFIRM_TIMEOUT,
+        bind_principal=caller_principal,
+    )
+
+
 def _check_authorized(outcome: Any) -> None:
-    """The wrapper's own check: run only behind an accepted, allowing outcome from the resolver."""
+    """The wrapper's own check: run only behind an accepted, allowing outcome from the resolvers."""
     if isinstance(outcome, AcceptedElicitation) and isinstance(outcome.data, Allowed):
         return
-    raise ToolError("Not confirmed; nothing was done.")
+    raise ToolError(NOT_CONFIRMED)
 
 
 def _with_tier(fn: Callable[..., Any], spec: TierSpec) -> Callable[..., Any]:
@@ -579,10 +757,26 @@ def _with_tier(fn: Callable[..., Any], spec: TierSpec) -> Callable[..., Any]:
     resolver.__module__ = getattr(fn, "__module__", __name__)
     resolver.__qualname__ = resolver.__name__ = f"{getattr(fn, '__qualname__', tool)}.<tier>"
 
+    # The second resolver gets the first one's outcome, whole (the person's answer, on 2026-07-28,
+    # arrives only here), and the Context, and decides.
+    async def confirmed(**kwargs: Any) -> Allowed:
+        return await _confirmed(tool, kwargs[_CTX_PARAM], kwargs[_ASKED_PARAM])
+
+    asked = Annotated[ElicitationResult[Confirmation], Resolve(resolver)]
+    confirmed.__signature__ = inspect.Signature(  # type: ignore[attr-defined]
+        [
+            inspect.Parameter(_CTX_PARAM, inspect.Parameter.KEYWORD_ONLY, annotation=Context),
+            inspect.Parameter(_ASKED_PARAM, inspect.Parameter.KEYWORD_ONLY, annotation=asked),
+        ]
+    )
+    confirmed.__annotations__ = {_CTX_PARAM: Context, _ASKED_PARAM: asked}
+    confirmed.__module__ = resolver.__module__
+    confirmed.__qualname__ = confirmed.__name__ = f"{getattr(fn, '__qualname__', tool)}.<confirmed>"
+
     hidden = inspect.Parameter(
         AUTHORIZED_PARAM,
         inspect.Parameter.KEYWORD_ONLY,
-        annotation=Annotated[ElicitationResult[Confirmation], Resolve(resolver)],
+        annotation=Annotated[ElicitationResult[Confirmation], Resolve(confirmed)],
     )
     # A keyword-only parameter goes before **kwargs, if the tool has one.
     at = next((i for i, p in enumerate(params) if p.kind is inspect.Parameter.VAR_KEYWORD), len(params))

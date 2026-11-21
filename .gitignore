@@ -43,6 +43,7 @@ htmlcov/
 # test templates live in templates/tests/ and render into tests/ via:
 #   python scripts/sync_shared.py --source . --package mcp_shared
 /tests/test_remote.py
+/tests/test_authorization.py
 /tests/test_logsafe.py
 /tests/test_tasks.py
 /tests/test_ratelimit.py

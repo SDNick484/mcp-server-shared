@@ -307,6 +307,7 @@ async def running(
     cfg: remote.HttpConfig,
     starts: list[int],
     health_check: remote.HealthChecker | None = None,
+    server: MCPServer | None = None,
 ):
     import uvicorn
 
@@ -314,7 +315,7 @@ async def running(
     sock.bind(("127.0.0.1", 0))
     port = sock.getsockname()[1]
     verifier = remote.AccessVerifier(cfg.access, public_key) if cfg.access else None
-    app = remote.build_app(tiny_server(starts), cfg, verifier, health_check=health_check)
+    app = remote.build_app(server or tiny_server(starts), cfg, verifier, health_check=health_check)
     server = uvicorn.Server(uvicorn.Config(app, log_level="warning", lifespan="on"))
     async with anyio.create_task_group() as tg:
         tg.start_soon(server.serve, [sock])
@@ -479,6 +480,173 @@ async def test_admitted_service_token_gets_in_over_http():
         mcp_client(f"{base}/thing/mcp", {remote.ACCESS_HEADER: service_token()}) as c,
     ):
         assert (await c.call_tool("ping", {})).content[0].text == "pong"
+
+
+# --- per-tool authorization over HTTP -----------------------------------------------
+def tiered_server(ran: list[str]) -> MCPServer:
+    m = MCPServer("tiered")
+
+    @m.tool()
+    @remote.tier("read")
+    def status() -> str:
+        ran.append("status")
+        return "ok"
+
+    @m.tool()
+    @remote.tier("power-off")
+    async def power_off() -> str:
+        ran.append("power_off")
+        return "off"
+
+    @m.tool()
+    @remote.tier("everyday")
+    async def play() -> str:
+        ran.append("play")
+        return "playing"
+
+    @m.tool()
+    @remote.tier("costly", confirm="Update the firmware?")
+    async def update() -> str:
+        ran.append("update")
+        return "updated"
+
+    @m.tool()
+    @remote.tier(lambda args: "power-off" if args["state"] == "off" else "everyday")
+    async def set_power(state: str, tv: str | None = None) -> str:
+        ran.append(f"set_power {state}")
+        return state
+
+    return m
+
+
+def automation_cfg(tiers: frozenset[str] = remote.DEFAULT_AUTOMATION_TIERS) -> remote.HttpConfig:
+    return remote.HttpConfig(
+        path="/thing/mcp",
+        public_hosts=("mcp.example.com",),
+        access=automated_policy("token-1.access"),
+        automation_tiers=tiers,
+    )
+
+
+# Both protocol revisions: the request (and so the caller) reaches the tool by different paths.
+@pytest.fixture(params=["legacy", "2026-07-28"])
+def protocol(request):
+    return request.param
+
+
+@asynccontextmanager
+async def tiered_client(cfg: remote.HttpConfig, ran: list[str], jwt_token: str, mode: str):
+    async with running(cfg, [], server=tiered_server(ran)) as base:
+        transport = streamable_http_client(
+            f"{base}/thing/mcp", http_client=httpx2.AsyncClient(headers={remote.ACCESS_HEADER: jwt_token})
+        )
+        async with Client(transport, mode=mode) as c:
+            yield c
+
+
+EVERYDAY = frozenset({"read", "power-off", "everyday"})
+
+
+@pytest.mark.anyio
+async def test_automated_caller_gets_read_and_power_off(protocol):
+    ran: list[str] = []
+    async with tiered_client(automation_cfg(), ran, service_token(), protocol) as c:
+        assert (await c.call_tool("status", {})).content[0].text == "ok"
+        assert (await c.call_tool("power_off", {})).content[0].text == "off"
+    assert ran == ["status", "power_off"]
+
+
+@pytest.mark.anyio
+async def test_automated_caller_refused_everyday_with_message(protocol):
+    ran: list[str] = []
+    async with tiered_client(automation_cfg(), ran, service_token(), protocol) as c:
+        result = await c.call_tool("play", {})
+    assert result.is_error
+    message = result.content[0].text
+    assert "This tool needs a person; automated callers may only use: read, power-off." in message
+    assert ran == []
+
+
+@pytest.mark.anyio
+async def test_automation_tiers_everyday_allows_it(protocol):
+    ran: list[str] = []
+    async with tiered_client(automation_cfg(EVERYDAY), ran, service_token(), protocol) as c:
+        assert (await c.call_tool("play", {})).content[0].text == "playing"
+    assert ran == ["play"]
+
+
+@pytest.mark.anyio
+async def test_automated_caller_never_gets_costly(protocol):
+    ran: list[str] = []
+    async with tiered_client(automation_cfg(EVERYDAY), ran, service_token(), protocol) as c:
+        result = await c.call_tool("update", {})
+    assert result.is_error
+    assert "automated callers may only use: read, power-off, everyday." in result.content[0].text
+    assert ran == []
+
+
+@pytest.mark.anyio
+async def test_set_power_on_refused_off_allowed_for_automated(protocol):
+    ran: list[str] = []
+    async with tiered_client(automation_cfg(), ran, service_token(), protocol) as c:
+        assert (await c.call_tool("set_power", {"state": "off", "tv": "tv-1"})).content[0].text == "off"
+        assert (await c.call_tool("set_power", {"state": "on", "tv": "tv-1"})).is_error
+    assert ran == ["set_power off"]
+
+
+@pytest.mark.anyio
+async def test_a_person_over_http_gets_everyday(protocol):
+    ran: list[str] = []
+    async with tiered_client(automation_cfg(), ran, token(), protocol) as c:
+        assert (await c.call_tool("play", {})).content[0].text == "playing"
+        assert (await c.call_tool("set_power", {"state": "on"})).content[0].text == "on"
+    assert ran == ["play", "set_power on"]
+
+
+@pytest.mark.anyio
+async def test_refusal_logged_at_info(caplog, protocol):
+    caplog.set_level("INFO", logger=remote.__name__)
+    async with tiered_client(automation_cfg(), [], service_token(), protocol) as c:
+        assert (await c.call_tool("set_power", {"state": "on"})).is_error
+    (record,) = [r for r in caplog.records if r.name == remote.__name__ and "refused" in r.getMessage()]
+    assert record.levelname == "INFO"
+    message = record.getMessage()
+    for part in ("automated", "token-1.access", "set_power", "everyday", "refused"):
+        assert part in message
+
+
+@pytest.mark.anyio
+async def test_a_request_that_skipped_the_middleware_is_refused(caplog, protocol):
+    """Nothing defaults open: an HTTP request with no Caller in its scope runs no tool, not even a read."""
+    import uvicorn
+
+    caplog.set_level("INFO", logger=remote.__name__)
+    ran: list[str] = []
+    sock = socket.socket()
+    sock.bind(("127.0.0.1", 0))
+    port = sock.getsockname()[1]
+    app = tiered_server(ran).streamable_http_app(streamable_http_path="/thing/mcp", host="127.0.0.1")
+    server = uvicorn.Server(uvicorn.Config(app, log_level="warning", lifespan="on"))
+    async with anyio.create_task_group() as tg:
+        tg.start_soon(server.serve, [sock])
+        while not server.started:
+            await anyio.sleep(0.01)
+        transport = streamable_http_client(f"http://127.0.0.1:{port}/thing/mcp")
+        async with Client(transport, mode=protocol) as c:
+            result = await c.call_tool("status", {})
+        server.should_exit = True
+    assert result.is_error and "can't tell who sent this request" in result.content[0].text
+    assert ran == []
+    assert any("unknown caller unknown, tool status, tier read: refused" in r.getMessage() for r in caplog.records)
+
+
+@pytest.mark.anyio
+async def test_person_refusal_logged_with_masked_email(caplog, protocol):
+    caplog.set_level("INFO", logger=remote.__name__)
+    async with tiered_client(automation_cfg(), [], token(), protocol) as c:
+        assert (await c.call_tool("update", {})).is_error
+    messages = [r.getMessage() for r in caplog.records if r.name == remote.__name__ and "refused" in r.getMessage()]
+    assert messages and all("u***@example.com" in m and "user@example.com" not in m for m in messages)
 
 
 @pytest.mark.anyio

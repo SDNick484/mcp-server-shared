@@ -65,20 +65,28 @@ after it, uvicorn closes what's left and runs the lifespan shutdown.
 from __future__ import annotations
 
 import argparse
+import functools
+import inspect
 import ipaddress
 import json
 import logging
 import os
 import re
 import time
+import typing
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass, field
-from typing import Any, Literal
+from typing import Annotated, Any, Literal, TypeVar, cast
 
 import anyio
 import jwt
-from mcp.server.mcpserver import MCPServer
+from mcp.server.elicitation import AcceptedElicitation, ElicitationResult
+from mcp.server.mcpserver import Context, MCPServer
+from mcp.server.mcpserver.exceptions import ToolError
+from mcp.server.mcpserver.resolve import Resolve, find_resolved_parameters
+from mcp.server.mcpserver.utilities.context_injection import find_context_parameter
 from mcp.server.transport_security import TransportSecuritySettings
+from pydantic import BaseModel, Field
 from starlette.types import ASGIApp, Receive, Scope, Send
 
 log = logging.getLogger(__name__)
@@ -392,6 +400,217 @@ class AccessVerifier:
         if isinstance(name, str) and name and name in self.policy.service_tokens:
             return Caller("automated", name, frozenset(automation_tiers))
         raise AccessDenied("unknown caller: no email, and no common_name in MCP_ALLOWED_SERVICE_TOKENS")
+
+
+# --- per-tool authorization --------------------------------------------------------------
+# Each sibling tool declares its tier with @tier, directly under @mcp.tool(...). The decorator adds
+# one hidden keyword-only parameter, filled by the SDK's resolver machinery (Resolve) before the
+# tool body runs and left out of the tool's input schema. The resolver reads the caller from the
+# HTTP request the SDK exposes on the tool's Context (AccessMiddleware put it in the ASGI scope),
+# decides the tier, and refuses what the caller may not do. A contextvar set in the middleware
+# would not do: a Streamable HTTP session runs in its own long-lived task.
+
+TierFn = Callable[[Mapping[str, Any]], Tier]
+F = TypeVar("F", bound=Callable[..., Any])
+# Where @tier leaves the TierSpec on the function it returns (functools.wraps copies it outward).
+TIER_ATTR = "__mcp_tier__"
+# The hidden parameter @tier adds, and the name its resolver takes the Context under.
+AUTHORIZED_PARAM = "tier_authorized"
+_CTX_PARAM = "_tier_ctx"  # a resolver parameter, not a tool one, so the SDK allows the underscore
+
+
+class Confirmation(BaseModel):
+    """What a person answers when a costly tool asks them (a single yes/no)."""
+
+    confirm: bool = Field(title="Run it?")
+
+
+@dataclass(frozen=True)
+class Allowed:
+    """The resolver's answer when the call may go ahead without asking anyone."""
+
+
+@dataclass(frozen=True)
+class TierSpec:
+    """A tool's tier, or a function of the call's arguments giving it, and the costly-call prompt."""
+
+    tier: Tier | TierFn
+    confirm: str | None = None
+
+    def resolve(self, args: Mapping[str, Any]) -> Tier:
+        """The tier of a call with these ``args``. Raises (``ValueError`` or the function's own error) if
+        there is none; the caller of this refuses the call then."""
+        level = self.tier if isinstance(self.tier, str) else self.tier(args)
+        if level not in TIERS:
+            raise ValueError(f"{level!r} is not a tier (use one of {', '.join(TIERS)})")
+        return level
+
+
+def tier(level: Tier | TierFn, *, confirm: str | None = None) -> Callable[[F], F]:
+    """Declare what a tool can do, so callers outside that tier are refused. Goes directly under
+    ``@mcp.tool(...)``::
+
+        @mcp.tool(title="Set power", annotations=ACT_IDEMPOTENT)
+        @tier(lambda args: "power-off" if args["state"] == "off" else "everyday")
+        async def webos_set_power(state: Literal["on", "off"], tv: TvArg = None) -> str: ...
+
+    ``level`` is one of ``TIERS``, or a function of the call's arguments (by name) returning one.
+    ``confirm`` is the sentence a person sees before a ``costly`` call; a literal ``costly`` without
+    it is a ``ValueError`` here, a function that returns ``costly`` without it is refused per call.
+
+    The returned function is not the tool's own: it takes one more keyword-only parameter, which
+    the SDK fills and leaves out of the input schema, and refuses to run without an allowing
+    value there. A direct Python call (not through MCP) that means to skip the check unwraps it:
+    ``fn.__wrapped__``.
+    """
+    if isinstance(level, str):
+        if level not in TIERS:
+            raise ValueError(f"{level!r} is not a tier (use one of {', '.join(TIERS)})")
+        if level == "costly" and not confirm:
+            raise ValueError("a costly tool needs confirm=, the sentence a person confirms before it runs")
+    elif not callable(level):
+        raise ValueError(f"a tier is one of {', '.join(TIERS)} or a function of the arguments (got {level!r})")
+    spec = TierSpec(level, confirm)
+
+    def decorate(fn: F) -> F:
+        return cast(F, _with_tier(fn, spec))
+
+    return decorate
+
+
+def tier_of(fn: Callable[..., Any]) -> TierSpec | None:
+    """The ``TierSpec`` ``@tier`` gave ``fn`` (or a function wrapping it with functools.wraps)."""
+    spec = getattr(fn, TIER_ATTR, None)
+    return spec if isinstance(spec, TierSpec) else None
+
+
+def caller_of(ctx: Context[Any, Any]) -> Caller:
+    """Who sent the request this tool call came in.
+
+    No request (stdio, the in-process client, or ``MCPServer.call_tool`` in a test): ``LOCAL``.
+    An HTTP request without a ``Caller`` in its scope never passed through ``AccessMiddleware``,
+    so it is refused rather than guessed at.
+    """
+    try:
+        request = ctx.request_context.request
+    except ValueError:  # Context.request_context: no request context at all
+        return LOCAL
+    if request is None:
+        return LOCAL
+    scope = getattr(request, "scope", None)
+    state = scope.get("state") if isinstance(scope, Mapping) else None
+    caller = state.get(CALLER_STATE_KEY) if isinstance(state, Mapping) else None
+    if not isinstance(caller, Caller):
+        raise ToolError("Refused: the server can't tell who sent this request.")
+    return caller
+
+
+def _log_outcome(caller: Caller | None, tool: str, level: str, outcome: str) -> None:
+    kind, shown = (caller.kind, caller.shown) if caller is not None else ("unknown", "unknown")
+    log.info("Authorization: %s caller %s, tool %s, tier %s: %s", kind, shown, tool, level, outcome)
+
+
+async def _authorize(spec: TierSpec, tool: str, ctx: Context[Any, Any], args: Mapping[str, Any]) -> Any:
+    """The resolver body: allow, or raise ``ToolError`` with why not. Never allows by default."""
+    caller: Caller | None = None
+    level = "?"
+    try:
+        level = spec.resolve(args)
+        caller = caller_of(ctx)
+    except ToolError as exc:
+        _log_outcome(caller, tool, level, f"refused ({exc})")
+        raise
+    except Exception as exc:
+        # A tier function that raises or names no tier: a bug in the sibling, never a reason to run.
+        _log_outcome(caller, tool, level, f"refused (no tier: {type(exc).__name__})")
+        raise ToolError("Refused: this tool's tier couldn't be worked out, so nothing was done.") from exc
+    if level not in caller.tiers:
+        allowed = ", ".join(t for t in TIERS if t in caller.tiers) or "nothing"
+        _log_outcome(caller, tool, level, "refused")
+        raise ToolError(f"This tool needs a person; automated callers may only use: {allowed}.")
+    if level == "costly":
+        # Asking the person comes with confirmations (Task 3); until then a costly call never runs.
+        _log_outcome(caller, tool, level, "refused (not confirmed)")
+        raise ToolError("Not confirmed; nothing was done.")
+    return Allowed()
+
+
+def _check_authorized(outcome: Any) -> None:
+    """The wrapper's own check: run only behind an accepted, allowing outcome from the resolver."""
+    if isinstance(outcome, AcceptedElicitation) and isinstance(outcome.data, Allowed):
+        return
+    raise ToolError("Not confirmed; nothing was done.")
+
+
+def _with_tier(fn: Callable[..., Any], spec: TierSpec) -> Callable[..., Any]:
+    """Build the function @tier returns: ``fn``'s parameters plus the hidden resolved one.
+
+    The hints are evaluated here, in ``fn``'s own module (``typing.get_type_hints`` uses
+    ``fn.__globals__``), and set on the wrapper as objects: with ``from __future__ import
+    annotations`` they are strings, which the SDK would otherwise evaluate in this module's
+    namespace, where a sibling's ``TvArg`` doesn't exist.
+    """
+    sig = inspect.signature(fn)
+    for reserved in (AUTHORIZED_PARAM, _CTX_PARAM):
+        if reserved in sig.parameters:
+            raise ValueError(f"@tier adds a parameter named {reserved!r}; {fn.__name__} already has one")
+    hints = typing.get_type_hints(fn, include_extras=True)
+    params = [p.replace(annotation=hints.get(p.name, p.annotation)) for p in sig.parameters.values()]
+    tool = getattr(fn, "__name__", repr(fn))
+
+    # The resolver takes the Context and every tool argument by name (the SDK passes exactly the
+    # names in the input schema, so the Context parameter and other resolved ones are left out).
+    skip = set(find_resolved_parameters(fn)) | {find_context_parameter(fn)}
+    by_name = [
+        p.name
+        for p in params
+        if p.name not in skip and p.kind not in (inspect.Parameter.VAR_POSITIONAL, inspect.Parameter.VAR_KEYWORD)
+    ]
+
+    async def resolver(**kwargs: Any) -> Any:
+        ctx = kwargs.pop(_CTX_PARAM)
+        return await _authorize(spec, tool, ctx, kwargs)
+
+    resolver.__signature__ = inspect.Signature(  # type: ignore[attr-defined]
+        [inspect.Parameter(_CTX_PARAM, inspect.Parameter.KEYWORD_ONLY, annotation=Context)]
+        + [inspect.Parameter(n, inspect.Parameter.KEYWORD_ONLY) for n in by_name]
+    )
+    resolver.__annotations__ = {_CTX_PARAM: Context}
+    resolver.__module__ = getattr(fn, "__module__", __name__)
+    resolver.__qualname__ = resolver.__name__ = f"{getattr(fn, '__qualname__', tool)}.<tier>"
+
+    hidden = inspect.Parameter(
+        AUTHORIZED_PARAM,
+        inspect.Parameter.KEYWORD_ONLY,
+        annotation=Annotated[ElicitationResult[Confirmation], Resolve(resolver)],
+    )
+    # A keyword-only parameter goes before **kwargs, if the tool has one.
+    at = next((i for i, p in enumerate(params) if p.kind is inspect.Parameter.VAR_KEYWORD), len(params))
+    params.insert(at, hidden)
+
+    wrapper: Callable[..., Any]
+    if inspect.iscoroutinefunction(fn):
+
+        @functools.wraps(fn)
+        async def wrapper(*args: Any, **kwargs: Any) -> Any:
+            _check_authorized(kwargs.pop(AUTHORIZED_PARAM, None))
+            return await fn(*args, **kwargs)
+
+    else:
+
+        @functools.wraps(fn)
+        def wrapper(*args: Any, **kwargs: Any) -> Any:
+            _check_authorized(kwargs.pop(AUTHORIZED_PARAM, None))
+            return fn(*args, **kwargs)
+
+    return_annotation = hints.get("return", sig.return_annotation)
+    wrapper.__signature__ = sig.replace(parameters=params, return_annotation=return_annotation)  # type: ignore[attr-defined]
+    annotations = {p.name: p.annotation for p in params if p.annotation is not inspect.Parameter.empty}
+    if return_annotation is not inspect.Signature.empty:
+        annotations["return"] = return_annotation
+    wrapper.__annotations__ = annotations
+    setattr(wrapper, TIER_ATTR, spec)
+    return wrapper
 
 
 # --- ASGI wrappers ---------------------------------------------------------------------

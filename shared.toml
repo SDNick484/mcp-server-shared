@@ -47,6 +47,12 @@ target = "tests/test_remote.py"
 render = true
 
 [[file]]
+source = "templates/tests/test_authorization.py"
+module = "remote"
+target = "tests/test_authorization.py"
+render = true
+
+[[file]]
 source = "templates/tests/test_logsafe.py"
 module = "logsafe"
 target = "tests/test_logsafe.py"

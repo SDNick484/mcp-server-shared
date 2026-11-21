@@ -41,7 +41,12 @@ Settings come from flags or the environment (flags win):
     --public-host / MCP_PUBLIC_HOSTS   e.g. mcp.example.com (the Host Cloudflare sends)
     CF_ACCESS_TEAM_DOMAIN          e.g. example.cloudflareaccess.com
     CF_ACCESS_AUD                  the Access application's audience tag(s), comma-separated
-    MCP_ALLOWED_EMAILS             optional, comma-separated
+    MCP_ALLOWED_EMAILS             optional, comma-separated; applies to people (JWTs with an email)
+    MCP_ALLOWED_SERVICE_TOKENS     optional, comma-separated Access service-token client IDs
+                                   (the JWT's common_name); unset admits no service token
+    MCP_AUTOMATION_TIERS           tiers an admitted service token may use, comma-separated;
+                                   default read,power-off; may add everyday; costly or an
+                                   unknown name refuses startup
     --insecure-no-auth     serve without Access beyond this machine (trusted-LAN testing only)
 
 Stopping: OpenRC's supervise-daemon (every sibling's init script) stops a
@@ -68,7 +73,7 @@ import re
 import time
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Literal
 
 import anyio
 import jwt
@@ -98,6 +103,14 @@ CORS_ALLOW_HEADERS = b"content-type, cf-access-jwt-assertion, authorization, mcp
 SHUTDOWN_TIMEOUT = 2
 _HOSTNAME_RE = re.compile(r"^[A-Za-z0-9.-]+$")
 
+# What a tool can do, least to most. A person may use all of them; an automated caller only the
+# tiers in MCP_AUTOMATION_TIERS, which can never include "costly".
+TIERS: tuple[str, ...] = ("read", "power-off", "everyday", "costly")
+Tier = Literal["read", "power-off", "everyday", "costly"]
+DEFAULT_AUTOMATION_TIERS: frozenset[str] = frozenset({"read", "power-off"})
+# Where AccessMiddleware leaves the Caller in the ASGI scope: scope["state"][CALLER_STATE_KEY].
+CALLER_STATE_KEY = "mcp_caller"
+
 
 class ConfigError(ValueError):
     """The HTTP settings are unsafe or incomplete; the message says how to fix them."""
@@ -111,6 +124,39 @@ def _csv(value: str | None) -> tuple[str, ...]:
     return tuple(v.strip() for v in (value or "").split(",") if v.strip())
 
 
+def _mask_email(email: str) -> str:
+    """``user@example.com`` as ``u***@example.com``: enough to tell logins apart in a log line.
+
+    logsafe's redact() would mask it too, but not with redaction off, and this module can't import
+    logsafe's mask_email (shared modules stay self-contained), so mask it here.
+    """
+    local, _, domain = email.partition("@")
+    return f"{local[:1]}***@{domain}" if domain else "this identity"
+
+
+@dataclass(frozen=True)
+class Caller:
+    """Who sent a request, as far as the server can tell.
+
+    ``kind``: a ``person`` (an Access login), an ``automated`` caller (an admitted service token) or
+    ``local`` (stdio, or HTTP with no Access: someone on this machine, treated as a person).
+    ``ident``: the login's e-mail (lower-cased), the token's client ID, or ``"local"``.
+    ``tiers``: the tiers this caller may use.
+    """
+
+    kind: Literal["person", "automated", "local"]
+    ident: str
+    tiers: frozenset[str]
+
+    @property
+    def shown(self) -> str:
+        """The caller as it may appear in a log line: an e-mail masked, a client ID as is."""
+        return _mask_email(self.ident) if self.kind == "person" else self.ident
+
+
+LOCAL = Caller("local", "local", frozenset(TIERS))
+
+
 @dataclass(frozen=True)
 class AccessPolicy:
     """Which Cloudflare Access application's assertions to accept."""
@@ -120,6 +166,9 @@ class AccessPolicy:
     # Empty: anyone Access let through. repr=False: a config repr in a log or a traceback (uvicorn
     # prints the app's state on some startup failures) must not list who is allowed in.
     emails: frozenset[str] = field(default=frozenset(), repr=False)
+    # Access service tokens (the JWT's common_name, the token's client ID) allowed in as automated
+    # callers. Empty: none is admitted, whatever Access lets through. repr=False for the same reason.
+    service_tokens: frozenset[str] = field(default=frozenset(), repr=False)
 
     @property
     def issuer(self) -> str:
@@ -138,6 +187,8 @@ class HttpConfig:
     public_hosts: tuple[str, ...] = ()
     access: AccessPolicy | None = None
     insecure_no_auth: bool = False
+    # What an automated caller (a service token) may do. Never "costly": that needs a person's yes.
+    automation_tiers: frozenset[str] = DEFAULT_AUTOMATION_TIERS
 
     @property
     def local_only(self) -> bool:
@@ -166,6 +217,12 @@ class HttpConfig:
                 raise ConfigError(
                     "CF_ACCESS_TEAM_DOMAIN is set but CF_ACCESS_AUD is empty; set the application's AUD tag."
                 )
+        wrong = sorted(t for t in self.automation_tiers if t not in TIERS or t == "costly")
+        if wrong:
+            raise ConfigError(
+                f"MCP_AUTOMATION_TIERS can't include {', '.join(repr(t) for t in wrong)}: "
+                f"use {', '.join(t for t in TIERS if t != 'costly')} ('costly' always needs a person's yes)."
+            )
         if not self.loopback and self.access is None and not self.insecure_no_auth:
             raise ConfigError(
                 f"Refusing to serve on {self.bind} without Cloudflare Access: anyone who can reach this port could "
@@ -213,7 +270,11 @@ def http_config(args: argparse.Namespace, env: Mapping[str, str] | None = None) 
             team_domain=team,
             audiences=_csv(env.get("CF_ACCESS_AUD")),
             emails=frozenset(e.lower() for e in _csv(env.get("MCP_ALLOWED_EMAILS"))),
+            service_tokens=frozenset(_csv(env.get("MCP_ALLOWED_SERVICE_TOKENS"))),
         )
+    raw_tiers = env.get("MCP_AUTOMATION_TIERS")
+    # Unset: the default. Set, even to nothing: exactly what it says, so a blank never widens.
+    automation_tiers = DEFAULT_AUTOMATION_TIERS if raw_tiers is None else frozenset(t.lower() for t in _csv(raw_tiers))
     raw_port = args.port if args.port is not None else (env.get("MCP_HTTP_PORT") or args._http_default_port)
     try:
         port = int(raw_port)
@@ -226,6 +287,7 @@ def http_config(args: argparse.Namespace, env: Mapping[str, str] | None = None) 
         public_hosts=tuple(args.public_host) or _csv(env.get("MCP_PUBLIC_HOSTS")),
         access=access,
         insecure_no_auth=bool(args.insecure_no_auth),
+        automation_tiers=automation_tiers,
     )
 
 
@@ -306,17 +368,30 @@ class AccessVerifier:
             )
         except jwt.PyJWTError as exc:
             raise AccessDenied(f"invalid Access assertion: {exc}") from exc
-        if self.policy.emails:
-            email = str(claims.get("email", "")).lower()
+        # The e-mail allow-list is for people: a service token's JWT has no email (see caller()).
+        if self.policy.emails and "email" in claims:
+            email = str(claims["email"]).lower()
             if email not in self.policy.emails:
                 # The identity is somebody Access let through but this server doesn't want; name it
-                # only enough to tell logins apart. logsafe's redact() would mask it in a log line, but
-                # not with redaction off, and this module can't import logsafe's mask_email (shared
-                # modules stay self-contained), so mask it here the same way.
-                local, _, domain = email.partition("@")
-                shown = f"{local[:1]}***@{domain}" if domain else "this identity"
-                raise AccessDenied(f"{shown} is not in MCP_ALLOWED_EMAILS")
+                # only enough to tell logins apart.
+                raise AccessDenied(f"{_mask_email(email)} is not in MCP_ALLOWED_EMAILS")
         return claims
+
+    def caller(self, claims: Mapping[str, Any], automation_tiers: frozenset[str]) -> Caller:
+        """Who the verified ``claims`` belong to: a person, an admitted service token, or nobody.
+
+        An ``email`` makes a person (the e-mail allow-list was applied in ``verify``). Without one,
+        the ``common_name`` (a service token's client ID) must be in ``policy.service_tokens``, and
+        then the caller is automated, limited to ``automation_tiers``. Anything else is refused:
+        an Access login this server doesn't know is never given the benefit of the doubt.
+        """
+        email = claims.get("email")
+        if isinstance(email, str) and email:
+            return Caller("person", email.lower(), frozenset(TIERS))
+        name = claims.get("common_name")
+        if isinstance(name, str) and name and name in self.policy.service_tokens:
+            return Caller("automated", name, frozenset(automation_tiers))
+        raise AccessDenied("unknown caller: no email, and no common_name in MCP_ALLOWED_SERVICE_TOKENS")
 
 
 # --- ASGI wrappers ---------------------------------------------------------------------
@@ -339,6 +414,10 @@ class AccessMiddleware:
     the health check is answered before auth so a local monitor can use it.
     With no verifier and ``local_only``, a request a proxy forwarded is refused
     instead (see the module docstring).
+
+    Every request it passes on carries who sent it, as a ``Caller`` in
+    ``scope["state"][CALLER_STATE_KEY]``: the person or admitted service token the assertion names,
+    or ``LOCAL`` when there is no verifier.
     """
 
     def __init__(
@@ -348,11 +427,13 @@ class AccessMiddleware:
         *,
         local_only: bool = False,
         health_check: HealthChecker | None = None,
+        automation_tiers: frozenset[str] = DEFAULT_AUTOMATION_TIERS,
     ) -> None:
         self.app = app
         self.verifier = verifier
         self.local_only = local_only
         self.health_check = health_check
+        self.automation_tiers = automation_tiers
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         if scope["type"] != "http":
@@ -411,18 +492,21 @@ class AccessMiddleware:
             )
             await send({"type": "http.response.body", "body": b""})
             return
+        caller = LOCAL
         if self.verifier is not None:
             token = headers.get(ACCESS_HEADER.encode(), b"").decode("latin-1")
             try:
                 if not token:
                     raise AccessDenied("no Cloudflare Access assertion (request didn't come through Access)")
                 claims = await self.verifier.verify(token)
+                caller = self.verifier.caller(claims, self.automation_tiers)
             except AccessDenied as exc:
                 client = scope.get("client") or ("?", 0)
                 log.warning("Denied %s %s from %s: %s", scope.get("method"), scope["path"], client[0], exc)
                 await _plain(send, 403, {"error": "forbidden"})
                 return
-            log.debug("Access OK for %s", claims.get("email") or claims.get("common_name") or claims.get("sub"))
+            log.debug("Access OK for %s caller %s", caller.kind, caller.shown)
+        scope.setdefault("state", {})[CALLER_STATE_KEY] = caller
         await self.app(scope, receive, send)
 
 
@@ -477,7 +561,13 @@ def build_app(
     app = mcp.streamable_http_app(
         streamable_http_path=cfg.path, transport_security=transport_security(cfg), host=cfg.bind
     )
-    return AccessMiddleware(app, verifier, local_only=cfg.local_only, health_check=health_check)
+    return AccessMiddleware(
+        app,
+        verifier,
+        local_only=cfg.local_only,
+        health_check=health_check,
+        automation_tiers=cfg.automation_tiers,
+    )
 
 
 def uvicorn_settings(cfg: HttpConfig) -> dict[str, Any]:

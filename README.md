@@ -4,7 +4,7 @@ The single source of truth for code the sibling MCP servers each carry a copy of
 
 | Module | Source in this repo | Destination in sibling | What it is |
 | --- | --- | --- | --- |
-| `remote` | `src/mcp_shared/remote.py` | `src/<pkg>/remote.py` | HTTP behind Cloudflare Access (incl. `/healthz` readiness hook and CORS `OPTIONS` preflight) |
+| `remote` | `src/mcp_shared/remote.py` | `src/<pkg>/remote.py` | HTTP behind Cloudflare Access (incl. `/healthz` readiness hook and CORS `OPTIONS` preflight), and per-tool authorization: `@tier` (see [What each caller may do](#what-each-caller-may-do)) |
 | `logsafe` | `src/mcp_shared/logsafe.py` | `src/<pkg>/logsafe.py` | log redaction (IPv4/IPv6 addresses, MACs, secrets incl. URL query tokens; `register_custom_pattern` for device-specific ones) |
 | `tasks` | `src/mcp_shared/tasks.py` | `src/<pkg>/tasks.py` | `stop_task`, `stop_tasks` and `spawn_task`: starting background tasks and stopping ones that drop a cancel |
 | `ratelimit` | `src/mcp_shared/ratelimit.py` | `src/<pkg>/ratelimit.py` | `TokenBucket` (`take`, `refund`, async `acquire`/`reserve`), `KeyedTokenBucket` and `refusal`: per-device rate limits |
@@ -166,6 +166,91 @@ Choices worth knowing about, and why:
   delete files that were previously synced but removed from `shared.toml`. You have to clean
   them by hand if they're unused.
 - **Exit codes:** 0 in sync, 1 drift, 2 anything else (network, a bad lock, bad arguments).
+
+## What each caller may do
+
+`remote.py` settles who sent each request, and `@tier` settles what they may do. Three kinds of caller:
+
+| Caller | Who | May use |
+| --- | --- | --- |
+| person | an Access login (the JWT has an `email`; `MCP_ALLOWED_EMAILS` still applies) | every tier; a `costly` call first asks for their yes |
+| automated | an Access service token whose client ID (the JWT's `common_name`) is in `MCP_ALLOWED_SERVICE_TOKENS` | the tiers in `MCP_AUTOMATION_TIERS`, never `costly` |
+| local | stdio, or HTTP with no Access (this machine only), including `--insecure-no-auth` | treated as a person, confirmation included |
+
+A JWT with no `email` and no admitted `common_name` gets a 403, as does one with no assertion at all.
+
+Two settings, both read by `http_config`:
+
+- `MCP_ALLOWED_SERVICE_TOKENS`: comma-separated service-token client IDs, e.g. `token-1.access`. Unset admits
+  none.
+- `MCP_AUTOMATION_TIERS`: what an admitted token may use. Unset means `read,power-off`; it may add
+  `everyday`; set blank, it means none. `costly` or a name that is not a tier refuses startup
+  (`ConfigError`). One setting for every token.
+
+Every tool has one tier:
+
+| Tier | Meaning | Examples |
+| --- | --- | --- |
+| `read` | changes nothing | every `*_get_status` and `*_list_*` |
+| `power-off` | turns something off, nothing else | `harmony_power_off`; `*_set_power` when `state` is `off` |
+| `everyday` | ordinary use | play/pause, inputs, activities, volume, launching an app |
+| `costly` | a chore to undo | a firmware update, rewriting a device's config, a reboot, losing unsaved game progress |
+
+Each sibling settles its own `costly` list. The tier may depend on the call's arguments, so a "make sure it's
+off" job can switch a TV off but not on.
+
+### Behaviour change: service tokens
+
+A Cloudflare Access service token used to get in whenever it passed Access, since only people's logins are
+checked against `MCP_ALLOWED_EMAILS`. Now it is refused (403) unless its client ID is in
+`MCP_ALLOWED_SERVICE_TOKENS`, even with no email allow-list. A deployment that relies on a service token must
+set the variable, and gets `read` and `power-off` unless it sets `MCP_AUTOMATION_TIERS` too.
+
+### Costly tools and the confirmation prompt
+
+A person's `costly` call is answered with an MCP elicitation prompt: the tool's `confirm` sentence, the server,
+the tool and its arguments, and one yes/no field, which the model cannot answer. Anything but an explicit yes
+(decline, cancel, no answer in 120 seconds) refuses the call, and one yes runs the tool once, for the person who
+gave it. Both protocol revisions are handled.
+
+This works only where the app can show the prompt, which today means the Claude Code CLI. Elsewhere (an app
+that doesn't declare elicitation, or declares it but shows nothing) the call is refused with "Run it from Claude
+Code", and nothing is done. That is deliberate: there is no fallback the model could answer for the person.
+
+### Wiring a sibling
+
+```python
+from mcp.server.mcpserver import MCPServer
+from .remote import request_state_security, tier
+
+mcp = MCPServer("webos", request_state_security=request_state_security())  # needed for the prompt
+
+
+@mcp.tool(title="Check status", annotations=READ_ONLY)
+@tier("read")
+async def webos_get_status() -> str: ...
+
+
+@mcp.tool(title="Set power", annotations=ACT_IDEMPOTENT)
+@tier(lambda args: "power-off" if args["state"] == "off" else "everyday")
+async def webos_set_power(state: Literal["on", "off"]) -> str: ...
+
+
+@mcp.tool(title="Update firmware", annotations=DESTRUCTIVE)
+@tier("costly", confirm="Update the TV's firmware?")  # costly needs a confirm sentence
+async def webos_update(...) -> str: ...
+```
+
+- `@tier` goes directly under `@mcp.tool(...)`.
+- Pass `request_state_security=request_state_security()` to the `MCPServer`. It makes the sealed answer expire in
+  120 seconds and ties it to the person who gave it, so another person's request can't reuse it. Without it
+  the SDK's default applies (600 seconds, not tied to anyone), which `remote.py` can't repair.
+- `@tier` adds one hidden keyword-only parameter, `tier_authorized` (`AUTHORIZED_PARAM`), which the SDK fills and
+  leaves out of the tool's input schema. It can't start with an underscore, because the SDK rejects those.
+- Calling a tiered tool directly from Python is refused, since nothing filled that parameter. A test that means
+  to skip the check calls the original: `fn.__wrapped__`.
+- `test_every_tool_has_a_tier` (synced into every sibling, skipped here) fails the sibling's tests for each tool
+  without a tier, naming it, and `test_costly_tools_have_confirm_text` for a blank confirm sentence.
 
 ## Routing eval
 

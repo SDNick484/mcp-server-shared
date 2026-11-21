@@ -49,6 +49,21 @@ Settings come from flags or the environment (flags win):
                                    unknown name refuses startup
     --insecure-no-auth     serve without Access beyond this machine (trusted-LAN testing only)
 
+What each caller may do: AccessMiddleware turns each verified request into a ``Caller``: a
+person (the JWT has an ``email``), an automated caller (no email, and a ``common_name`` listed in
+MCP_ALLOWED_SERVICE_TOKENS) or local (stdio, or no Access). A JWT that is none of these gets a 403,
+so a service token is refused unless its client ID is listed, even with no e-mail allow-list. Every
+tool declares a tier with ``@tier`` under ``@mcp.tool(...)``: ``read`` (changes nothing),
+``power-off`` (turns something off), ``everyday`` or ``costly`` (a chore to undo). People and local
+callers may use every tier; an automated caller only those in MCP_AUTOMATION_TIERS (never
+``costly``). A costly call from a person asks first, in an MCP elicitation prompt showing the tool's
+``confirm`` sentence: anything but a yes refuses it, one yes runs it once, and in an app that can't
+show the prompt (today everything but the Claude Code CLI) it is refused. The sibling passes
+``request_state_security=request_state_security()`` to its ``MCPServer``. ``@tier`` adds a hidden
+``tier_authorized`` parameter (``AUTHORIZED_PARAM``; the SDK rejects names starting with ``_``), so
+calling a tiered tool directly from Python is refused: a test that means to skip the check calls
+``fn.__wrapped__``. The README's "What each caller may do" has the tiers, the settings and the wiring.
+
 Stopping: OpenRC's supervise-daemon (every sibling's init script) stops a
 service with SIGTERM and SIGKILLs it 5 seconds later by default
 (``--retry SIGTERM/5``). A SIGKILL skips the lifespan shutdown, where the

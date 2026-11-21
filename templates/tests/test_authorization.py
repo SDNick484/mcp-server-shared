@@ -520,3 +520,206 @@ def test_recording_codec_notes_only_the_sdk_envelope():
         assert noted is not None and noted[0] == "state"
 
     contextvars.Context().run(check)  # a fresh context: nothing noted yet, and nothing left behind
+
+
+# --- every tool has a tier ----------------------------------------------------------------
+# What every sibling runs, so a tool added without @tier fails CI there. mcp_shared has no server,
+# so the two sibling tests skip here (by design); the helpers they share are tested against fake
+# servers, so the check itself is known to bite.
+
+
+def server_mcp(package: str = "__PKG__") -> MCPServer | None:
+    """The package's ``server.mcp``, or ``None`` if it has no ``server`` module (mcp_shared)."""
+    if importlib.util.find_spec(f"{package}.server") is None:
+        return None
+    module = importlib.import_module(f"{package}.server")
+    mcp = module.mcp
+    assert isinstance(mcp, MCPServer), f"{package}.server.mcp is not an MCPServer"
+    return mcp
+
+
+async def tool_functions(mcp: MCPServer) -> dict[str, Any]:
+    """Each registered tool's function by name.
+
+    ``_tool_manager`` is private, but the SDK offers no public way to the function itself (the
+    listing has only the schema), and ``mcp<3`` pins it.
+    """
+    functions: dict[str, Any] = {}
+    for listed in await mcp.list_tools():
+        registered = mcp._tool_manager.get_tool(listed.name)
+        assert registered is not None, f"{listed.name} is listed but not registered"
+        functions[listed.name] = registered.fn
+    return functions
+
+
+async def untiered_tools(mcp: MCPServer) -> list[str]:
+    """Names of the server's tools that carry no ``@tier``, sorted."""
+    return sorted(name for name, fn in (await tool_functions(mcp)).items() if remote.tier_of(fn) is None)
+
+
+async def costly_without_confirm(mcp: MCPServer) -> list[str]:
+    """Names of tools whose confirm sentence is blank, or missing on a tool that is always costly.
+
+    A function-form tier with no sentence can't be judged here (it may never say ``costly``); a
+    call that does is refused at run time.
+    """
+    bad = []
+    for name, fn in sorted((await tool_functions(mcp)).items()):
+        spec = remote.tier_of(fn)
+        if spec is None:
+            continue
+        if (spec.confirm is not None and not spec.confirm.strip()) or (spec.tier == "costly" and not spec.confirm):
+            bad.append(name)
+    return bad
+
+
+async def assert_every_tool_has_a_tier(mcp: MCPServer) -> None:
+    missing = await untiered_tools(mcp)
+    assert not missing, (
+        f"these tools have no tier: {', '.join(missing)}. Put @tier(...) directly under @mcp.tool(...) "
+        "(read, power-off, everyday or costly; see the README's 'What each caller may do')."
+    )
+
+
+async def assert_costly_tools_have_confirm_text(mcp: MCPServer) -> None:
+    bad = await costly_without_confirm(mcp)
+    assert not bad, f"these tools need a confirm sentence a person sees before they run: {', '.join(bad)}"
+
+
+def fake_package(tmp_path, monkeypatch, name: str, server_source: str | None) -> None:
+    """Make ``name`` importable (with a ``server`` module of this source, unless ``None``)."""
+    package = tmp_path / name
+    package.mkdir()
+    (package / "__init__.py").write_text("")
+    if server_source is not None:
+        (package / "server.py").write_text(textwrap.dedent(server_source))
+    monkeypatch.syspath_prepend(str(tmp_path))
+    for module in (name, f"{name}.server"):
+        monkeypatch.delitem(sys.modules, module, raising=False)
+    importlib.invalidate_caches()
+
+
+SERVER_SOURCE = """
+    from mcp.server.mcpserver import MCPServer
+
+    from __PKG__ import remote
+
+    mcp = MCPServer("fake")
+
+    @mcp.tool()
+    @remote.tier("read")
+    def status() -> str:
+        return "ok"
+
+    @mcp.tool()
+    def forgotten() -> str:  # no @tier
+        return "oops"
+"""
+
+
+@pytest.mark.anyio
+async def test_every_tool_has_a_tier():
+    mcp = server_mcp()
+    if mcp is None:
+        pytest.skip("no server in this package")
+    await assert_every_tool_has_a_tier(mcp)
+
+
+@pytest.mark.anyio
+async def test_costly_tools_have_confirm_text():
+    mcp = server_mcp()
+    if mcp is None:
+        pytest.skip("no server in this package")
+    await assert_costly_tools_have_confirm_text(mcp)
+
+
+@pytest.mark.anyio
+async def test_untiered_tools_names_each_one_and_only_those():
+    ran: list[str] = []
+    m = tiered_server(ran)
+    assert await untiered_tools(m) == []
+    await assert_every_tool_has_a_tier(m)
+
+    @m.tool()
+    def forgotten() -> str:
+        return "oops"
+
+    @m.tool()
+    async def also_forgotten() -> str:
+        return "oops"
+
+    assert await untiered_tools(m) == ["also_forgotten", "forgotten"]
+    with pytest.raises(AssertionError, match="also_forgotten, forgotten"):
+        await assert_every_tool_has_a_tier(m)
+
+
+@pytest.mark.anyio
+async def test_untiered_tools_sees_a_tier_through_another_decorator():
+    """A sibling may wrap the tool again (``functools.wraps`` carries the tier along); a bare wrapper does not."""
+
+    def logged(fn):
+        @functools.wraps(fn)
+        def inner(*args, **kwargs):
+            return fn(*args, **kwargs)
+
+        return inner
+
+    m = MCPServer("wrapped")
+    m.tool(name="kept")(logged(remote.tier("read")(lambda: "ok")))
+
+    def bare() -> str:
+        return "ok"
+
+    m.tool(name="lost")(bare)
+    assert await untiered_tools(m) == ["lost"]
+
+
+@pytest.mark.anyio
+async def test_costly_without_confirm_text_is_found():
+    m = tiered_server([])
+    assert await costly_without_confirm(m) == []
+    await assert_costly_tools_have_confirm_text(m)
+
+    m.tool(name="blank")(remote.tier("costly", confirm="  ")(lambda: "x"))
+    m.tool(name="by_args")(remote.tier(lambda args: "costly")(lambda: "x"))  # judged per call, at run time
+    m.tool(name="by_args_blank")(remote.tier(lambda args: "costly", confirm=" ")(lambda: "x"))
+    m.tool(name="untiered")(lambda: "x")  # not this check's business
+    assert await costly_without_confirm(m) == ["blank", "by_args_blank"]
+    with pytest.raises(AssertionError, match="blank, by_args_blank"):
+        await assert_costly_tools_have_confirm_text(m)
+
+
+@pytest.mark.anyio
+async def test_the_sibling_check_fails_on_a_server_module_with_an_untiered_tool(tmp_path, monkeypatch):
+    """The same path the real test takes: find the package's server, import it, check its tools."""
+    fake_package(tmp_path, monkeypatch, "fake_sibling_untiered", SERVER_SOURCE)
+    mcp = server_mcp("fake_sibling_untiered")
+    assert mcp is not None
+    assert await untiered_tools(mcp) == ["forgotten"]
+    with pytest.raises(AssertionError, match="forgotten"):
+        await assert_every_tool_has_a_tier(mcp)
+
+
+@pytest.mark.anyio
+async def test_the_sibling_check_passes_once_every_tool_is_tiered(tmp_path, monkeypatch):
+    tiered = SERVER_SOURCE.replace(
+        "    @mcp.tool()\n    def forgotten",
+        '    @mcp.tool()\n    @remote.tier("read")\n    def forgotten',
+    )
+    assert tiered != SERVER_SOURCE
+    fake_package(tmp_path, monkeypatch, "fake_sibling_tiered", tiered)
+    mcp = server_mcp("fake_sibling_tiered")
+    assert mcp is not None
+    await assert_every_tool_has_a_tier(mcp)
+    await assert_costly_tools_have_confirm_text(mcp)
+
+
+def test_server_mcp_is_none_without_a_server_module(tmp_path, monkeypatch):
+    fake_package(tmp_path, monkeypatch, "fake_sibling_no_server", None)
+    assert server_mcp("fake_sibling_no_server") is None
+
+
+def test_server_mcp_insists_on_an_mcpserver(tmp_path, monkeypatch):
+    fake_package(tmp_path, monkeypatch, "fake_sibling_odd", "mcp = 7\n")
+    with pytest.raises(AssertionError, match="not an MCPServer"):
+        server_mcp("fake_sibling_odd")

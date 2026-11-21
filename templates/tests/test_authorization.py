@@ -529,11 +529,17 @@ def test_recording_codec_notes_only_the_sdk_envelope():
 
 
 def server_mcp(package: str = "__PKG__") -> MCPServer | None:
-    """The package's ``server.mcp``, or ``None`` if it has no ``server`` module (mcp_shared)."""
+    """The package's ``server.mcp``, or ``None`` if there is none to check.
+
+    ``None`` when the package has no ``server`` module (mcp_shared), or when that module builds its
+    server in a function rather than at module level: such a repo checks tiers in its own tests.
+    """
     if importlib.util.find_spec(f"{package}.server") is None:
         return None
     module = importlib.import_module(f"{package}.server")
-    mcp = module.mcp
+    mcp = getattr(module, "mcp", None)
+    if mcp is None:
+        return None
     assert isinstance(mcp, MCPServer), f"{package}.server.mcp is not an MCPServer"
     return mcp
 
@@ -621,7 +627,7 @@ SERVER_SOURCE = """
 async def test_every_tool_has_a_tier():
     mcp = server_mcp()
     if mcp is None:
-        pytest.skip("no server in this package")
+        pytest.skip("no module-level server.mcp in this package: tiers are checked in its own tests")
     await assert_every_tool_has_a_tier(mcp)
 
 
@@ -629,7 +635,7 @@ async def test_every_tool_has_a_tier():
 async def test_costly_tools_have_confirm_text():
     mcp = server_mcp()
     if mcp is None:
-        pytest.skip("no server in this package")
+        pytest.skip("no module-level server.mcp in this package: tiers are checked in its own tests")
     await assert_costly_tools_have_confirm_text(mcp)
 
 
@@ -717,6 +723,11 @@ async def test_the_sibling_check_passes_once_every_tool_is_tiered(tmp_path, monk
 def test_server_mcp_is_none_without_a_server_module(tmp_path, monkeypatch):
     fake_package(tmp_path, monkeypatch, "fake_sibling_no_server", None)
     assert server_mcp("fake_sibling_no_server") is None
+
+
+def test_server_mcp_is_none_when_the_server_is_built_by_a_function(tmp_path, monkeypatch):
+    fake_package(tmp_path, monkeypatch, "fake_sibling_built", "def build_server():\n    return None\n")
+    assert server_mcp("fake_sibling_built") is None
 
 
 def test_server_mcp_insists_on_an_mcpserver(tmp_path, monkeypatch):

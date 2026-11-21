@@ -250,7 +250,9 @@ async def webos_update(...) -> str: ...
 - Calling a tiered tool directly from Python is refused, since nothing filled that parameter. A test that means
   to skip the check calls the original: `fn.__wrapped__`.
 - `test_every_tool_has_a_tier` (synced into every sibling, skipped here) fails the sibling's tests for each tool
-  without a tier, naming it, and `test_costly_tools_have_confirm_text` for a blank confirm sentence.
+  without a tier, naming it, and `test_costly_tools_have_confirm_text` for a blank confirm sentence. Both find
+  the server as the module-level `<package>.server.mcp`; a sibling that builds its server in a function gets a
+  skip and checks tiers in its own tests with the same helpers (`assert_every_tool_has_a_tier`).
 
 ## Routing eval
 

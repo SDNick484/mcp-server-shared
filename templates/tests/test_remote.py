@@ -114,6 +114,35 @@ def test_loopback_recognizes_localhost_ipv6_and_rejects_non_loopback():
         remote.HttpConfig(bind="device.lan").check()
 
 
+# --- caller kinds and the automation settings ------------------------------------------
+def test_automation_tiers_default_and_parse():
+    assert parse(["--http"]).automation_tiers == frozenset({"read", "power-off"})
+    assert remote.HttpConfig().automation_tiers == frozenset({"read", "power-off"})
+    cfg = parse([], {"MCP_AUTOMATION_TIERS": "read, Everyday"})
+    assert cfg.automation_tiers == frozenset({"read", "everyday"})
+    cfg.check()
+    # Set but empty narrows (automated callers get nothing); it never falls back to the wider default.
+    assert parse([], {"MCP_AUTOMATION_TIERS": ""}).automation_tiers == frozenset()
+
+
+@pytest.mark.parametrize("value,named", [("costly", "costly"), ("read,costly", "costly"), ("reed", "reed")])
+def test_automation_tiers_refuse_costly_and_unknown(value, named):
+    cfg = parse([], {"MCP_AUTOMATION_TIERS": value})
+    with pytest.raises(remote.ConfigError, match="MCP_AUTOMATION_TIERS") as refused:
+        cfg.check()
+    assert named in str(refused.value)
+    with pytest.raises(remote.ConfigError, match="MCP_AUTOMATION_TIERS"):
+        remote.build_app(tiny_server([]), cfg)  # startup refuses, not just check()
+
+
+def test_service_tokens_setting_parsed():
+    env = {"CF_ACCESS_TEAM_DOMAIN": TEAM, "CF_ACCESS_AUD": AUD}
+    assert parse([], env).access.service_tokens == frozenset()  # unset: none admitted
+    cfg = parse([], {**env, "MCP_ALLOWED_SERVICE_TOKENS": "token-1.access, Token-2.access"})
+    assert cfg.access.service_tokens == frozenset({"token-1.access", "Token-2.access"})  # IDs are exact
+    assert "token-1.access" not in repr(cfg)  # like the e-mail allow-list, not for logs
+
+
 def test_certs_url_and_default_verifier_wiring():
     assert POLICY.certs_url == f"https://{TEAM}/cdn-cgi/access/certs"
     app = remote.build_app(tiny_server([]), CFG)
@@ -172,6 +201,82 @@ async def test_email_allow_list():
         await remote.AccessVerifier(policy, public_key).verify(token(email=""))
 
 
+def automated_policy(*tokens: str, emails: frozenset[str] = frozenset()) -> remote.AccessPolicy:
+    return remote.AccessPolicy(TEAM, (AUD,), emails, frozenset(tokens))
+
+
+def service_token(**overrides: object) -> str:
+    return token(email=None, common_name="token-1.access", **overrides)
+
+
+READ_ONLY = frozenset({"read"})
+
+
+@pytest.mark.anyio
+async def test_caller_person_from_email():
+    verifier = remote.AccessVerifier(POLICY, public_key)
+    caller = verifier.caller(await verifier.verify(token(email="User@Example.com")), READ_ONLY)
+    assert caller == remote.Caller("person", "user@example.com", frozenset(remote.TIERS))
+    assert caller.tiers == {"read", "power-off", "everyday", "costly"}
+
+
+@pytest.mark.anyio
+async def test_caller_automated_from_admitted_common_name():
+    verifier = remote.AccessVerifier(automated_policy("token-1.access"), public_key)
+    caller = verifier.caller(await verifier.verify(service_token()), frozenset({"read", "power-off"}))
+    assert caller == remote.Caller("automated", "token-1.access", frozenset({"read", "power-off"}))
+    assert "costly" not in caller.tiers
+
+
+@pytest.mark.anyio
+async def test_service_token_refused_when_not_admitted():
+    """Review Focus 1: no allow-lists at all, a service token (common_name only) gets in no more."""
+    verifier = remote.AccessVerifier(POLICY, public_key)
+    claims = await verifier.verify(service_token())  # signature, audience and expiry are fine
+    with pytest.raises(remote.AccessDenied, match="unknown caller"):
+        verifier.caller(claims, READ_ONLY)
+    # Admitting some other token doesn't admit this one.
+    other = remote.AccessVerifier(automated_policy("token-2.access"), public_key)
+    with pytest.raises(remote.AccessDenied, match="unknown caller"):
+        other.caller(claims, READ_ONLY)
+
+
+@pytest.mark.anyio
+async def test_service_token_admitted_alongside_email_allow_list():
+    policy = automated_policy("token-1.access", emails=frozenset({"user@example.com"}))
+    verifier = remote.AccessVerifier(policy, public_key)
+    claims = await verifier.verify(service_token())  # no email, so the e-mail list doesn't apply
+    assert verifier.caller(claims, READ_ONLY).kind == "automated"
+    # ...but it still applies to anything that does carry one.
+    with pytest.raises(remote.AccessDenied, match="not in MCP_ALLOWED_EMAILS"):
+        await verifier.verify(token(email="guest@example.com", common_name="token-1.access"))
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("claims", [{}, {"email": ""}, {"common_name": ""}, {"common_name": 7}, {"email": 7}])
+async def test_jwt_with_neither_email_nor_common_name_refused(claims):
+    verifier = remote.AccessVerifier(automated_policy("", "7"), public_key)
+    with pytest.raises(remote.AccessDenied, match="unknown caller"):
+        verifier.caller(claims, READ_ONLY)
+
+
+@pytest.mark.anyio
+async def test_a_signed_jwt_with_no_identity_is_refused_as_an_unknown_caller():
+    verifier = remote.AccessVerifier(automated_policy("token-1.access"), public_key)
+    claims = await verifier.verify(token(email=None))
+    with pytest.raises(remote.AccessDenied, match="unknown caller"):
+        verifier.caller(claims, READ_ONLY)
+
+
+def test_caller_shown_masks_email():
+    assert remote.Caller("person", "user@example.com", frozenset()).shown == "u***@example.com"
+    assert remote.Caller("person", "nonsense", frozenset()).shown == "this identity"
+    assert remote.Caller("automated", "token-1.access", frozenset()).shown == "token-1.access"
+    assert remote.LOCAL.shown == "local"
+    assert remote.Caller("local", "local", frozenset(remote.TIERS)) == remote.LOCAL
+    assert remote.TIERS == ("read", "power-off", "everyday", "costly")
+
+
 def test_policy_repr_hides_the_allow_list():
     """A config repr ends up in logs and tracebacks; the e-mail allow-list must not."""
     policy = remote.AccessPolicy(TEAM, (AUD,), frozenset({"user@example.com"}))
@@ -208,7 +313,7 @@ async def running(
     sock = socket.socket()
     sock.bind(("127.0.0.1", 0))
     port = sock.getsockname()[1]
-    verifier = remote.AccessVerifier(POLICY, public_key) if cfg.access else None
+    verifier = remote.AccessVerifier(cfg.access, public_key) if cfg.access else None
     app = remote.build_app(tiny_server(starts), cfg, verifier, health_check=health_check)
     server = uvicorn.Server(uvicorn.Config(app, log_level="warning", lifespan="on"))
     async with anyio.create_task_group() as tg:
@@ -291,6 +396,89 @@ async def test_tools_work_with_a_valid_assertion_and_the_lifespan_runs_once():
             async with mcp_client(f"{base}/thing/mcp", {remote.ACCESS_HEADER: token()}) as c:
                 assert (await c.call_tool("ping", {})).content[0].text == "pong"
     assert starts == [1]
+
+
+async def scope_seen_by_inner_app(verifier: remote.AccessVerifier | None, headers: list[tuple[bytes, bytes]]):
+    seen: list[dict] = []
+
+    async def inner(scope, receive, send):
+        seen.append(scope)
+
+    sent: list[dict] = []
+
+    async def send(message):
+        sent.append(message)
+
+    async def receive():
+        return {"type": "http.request"}
+
+    app = remote.AccessMiddleware(inner, verifier, automation_tiers=frozenset({"read"}))
+    await app({"type": "http", "method": "POST", "path": "/mcp", "headers": headers}, receive, send)
+    return seen, sent
+
+
+@pytest.mark.anyio
+async def test_middleware_puts_caller_in_scope():
+    assert remote.CALLER_STATE_KEY == "mcp_caller"
+    verifier = remote.AccessVerifier(automated_policy("token-1.access"), public_key)
+    header = remote.ACCESS_HEADER.encode()
+
+    seen, _ = await scope_seen_by_inner_app(verifier, [(header, token().encode())])
+    assert seen[0]["state"][remote.CALLER_STATE_KEY].kind == "person"
+    assert seen[0]["state"][remote.CALLER_STATE_KEY].ident == "user@example.com"
+
+    seen, _ = await scope_seen_by_inner_app(verifier, [(header, service_token().encode())])
+    caller = seen[0]["state"][remote.CALLER_STATE_KEY]
+    assert (caller.kind, caller.ident, caller.tiers) == ("automated", "token-1.access", frozenset({"read"}))
+
+    seen, _ = await scope_seen_by_inner_app(None, [])
+    assert seen[0]["state"][remote.CALLER_STATE_KEY] is remote.LOCAL
+
+
+@pytest.mark.anyio
+async def test_middleware_keeps_existing_scope_state():
+    seen: list[dict] = []
+
+    async def inner(scope, receive, send):
+        seen.append(scope)
+
+    async def receive():
+        return {"type": "http.request"}
+
+    async def send(message):
+        pass
+
+    app = remote.AccessMiddleware(inner, None)
+    await app({"type": "http", "method": "POST", "path": "/mcp", "headers": [], "state": {"x": 1}}, receive, send)
+    assert seen[0]["state"] == {"x": 1, "mcp_caller": remote.LOCAL}
+
+
+@pytest.mark.anyio
+async def test_middleware_denies_an_unadmitted_service_token_with_403():
+    verifier = remote.AccessVerifier(POLICY, public_key)
+    seen, sent = await scope_seen_by_inner_app(verifier, [(remote.ACCESS_HEADER.encode(), service_token().encode())])
+    assert seen == [] and sent[0]["status"] == 403
+
+
+@pytest.mark.anyio
+async def test_unadmitted_service_token_gets_403_over_http():
+    """Review Focus 1, end to end: today this token gets in; with nothing configured it must not."""
+    async with running(CFG, []) as base, httpx2.AsyncClient() as http:
+        body = {"jsonrpc": "2.0", "id": 1, "method": "ping"}
+        resp = await http.post(f"{base}/thing/mcp", json=body, headers={remote.ACCESS_HEADER: service_token()})
+        assert resp.status_code == 403 and resp.json() == {"error": "forbidden"}
+
+
+@pytest.mark.anyio
+async def test_admitted_service_token_gets_in_over_http():
+    cfg = remote.HttpConfig(
+        path="/thing/mcp", public_hosts=("mcp.example.com",), access=automated_policy("token-1.access")
+    )
+    async with (
+        running(cfg, []) as base,
+        mcp_client(f"{base}/thing/mcp", {remote.ACCESS_HEADER: service_token()}) as c,
+    ):
+        assert (await c.call_tool("ping", {})).content[0].text == "pong"
 
 
 @pytest.mark.anyio

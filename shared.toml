@@ -93,3 +93,9 @@ render = true
 [[file]]
 source = "scripts/sync_shared.py"
 target = "scripts/sync_shared.py"
+
+# Sourced by each sibling's deploy/alpine/install.sh: pins the commit installed and stamps COMMIT.
+[[file]]
+source = "deploy/alpine/commit.sh"
+module = "deploy"
+target = "deploy/alpine/commit.sh"

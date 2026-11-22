@@ -16,6 +16,8 @@ software/systems engineer: be technical and concrete, with specific examples.
 - `src/mcp_shared/remote.py`, `logsafe.py`, `tasks.py`, `ratelimit.py`, `registry.py`, `lookup.py`, `tools.py`: the shared modules, copied byte for byte
   into each sibling's package. They must not import anything from their own package
   (`mcp_shared` or a sibling's), since the bytes have to work in all of them.
+- `deploy/alpine/commit.sh`: shared too (module `deploy`); each sibling's `install.sh` sources it to pin and stamp the
+  commit it installs (`$PREFIX/COMMIT`, which `remote.py` reports at `/healthz`). Tested by `tests/test_commit_sh.py`.
 - `templates/tests/`: the shared tests, with `__PKG__` for the package name. Excluded from ruff
   and mypy since `__PKG__` isn't a valid package.
 - `tests/test_sync_shared.py`: tests for the sync script itself.

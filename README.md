@@ -4,13 +4,14 @@ The single source of truth for code the sibling MCP servers each carry a copy of
 
 | Module | Source in this repo | Destination in sibling | What it is |
 | --- | --- | --- | --- |
-| `remote` | `src/mcp_shared/remote.py` | `src/<pkg>/remote.py` | HTTP behind Cloudflare Access (incl. `/healthz` readiness hook and CORS `OPTIONS` preflight), and per-tool authorization: `@tier` (see [What each caller may do](#what-each-caller-may-do)) |
+| `remote` | `src/mcp_shared/remote.py` | `src/<pkg>/remote.py` | HTTP behind Cloudflare Access (incl. `/healthz` and `<path>/healthz` readiness with the running commit (see [Health and the running commit](#health-and-the-running-commit)), and CORS `OPTIONS` preflight), and per-tool authorization: `@tier` (see [What each caller may do](#what-each-caller-may-do)) |
 | `logsafe` | `src/mcp_shared/logsafe.py` | `src/<pkg>/logsafe.py` | log redaction (IPv4/IPv6 addresses, MACs, secrets incl. URL query tokens; `register_custom_pattern` for device-specific ones) |
 | `tasks` | `src/mcp_shared/tasks.py` | `src/<pkg>/tasks.py` | `stop_task`, `stop_tasks` and `spawn_task`: starting background tasks and stopping ones that drop a cancel |
 | `ratelimit` | `src/mcp_shared/ratelimit.py` | `src/<pkg>/ratelimit.py` | `TokenBucket` (`take`, `refund`, async `acquire`/`reserve`), `KeyedTokenBucket` and `refusal`: per-device rate limits |
 | `registry` | `src/mcp_shared/registry.py` | `src/<pkg>/registry.py` | the assumption registry's record, statuses, queries and doctor summaries (`doctor_lines`, `doctor_summary`; each sibling's list stays in its `assumptions.py`) |
 | `lookup` | `src/mcp_shared/lookup.py` | `src/<pkg>/lookup.py` | `norm`, `suggest`, and `unknown_with_suggestions`: normalized matching and closest candidate suggestions on lookup misses |
 | `tools` | `src/mcp_shared/tools.py` | `src/<pkg>/tools.py` | standard MCP `ToolAnnotations` presets (`READ_ONLY`, `ACT`, `ACT_IDEMPOTENT`, `DESTRUCTIVE`, `OPEN_WORLD_READ`) |
+| `deploy` | `deploy/alpine/commit.sh` | `deploy/alpine/commit.sh` | sourced by the sibling's `install.sh`: pins the commit it installs and stamps `$PREFIX/COMMIT` |
 | (each) | `templates/tests/test_*.py` | `tests/test_*.py` | each module's tests, with `__PKG__` for the package name |
 | (none) | `scripts/sync_shared.py` | `scripts/sync_shared.py` | the script that copies all of the above |
 
@@ -253,6 +254,63 @@ async def webos_update(...) -> str: ...
   without a tier, naming it, and `test_costly_tools_have_confirm_text` for a blank confirm sentence. Both find
   the server as the module-level `<package>.server.mcp`; a sibling that builds its server in a function gets a
   skip and checks tiers in its own tests with the same helpers (`assert_every_tool_has_a_tier`).
+
+## Health and the running commit
+
+Each server answers two health routes, both before the Access check and with the same body:
+
+- `GET /healthz`: for a monitor on the same machine or LAN.
+- `GET <MCP_HTTP_PATH>/healthz` (`/webos/mcp/healthz`, `/mcp/backlog/healthz`): the one reachable from
+  outside, since the tunnel routes only the MCP path to each server. It is the MCP path with `/healthz`
+  appended (a trailing slash on the path is dropped); there is no setting for it.
+
+200 `{"status": "ok", ...}` when healthy, 503 `{"status": "degraded", ...}` when the server's `health_check`
+says so (a device that's off, say). Both, in either case, add the code the server runs:
+
+```json
+{"status": "ok", "commit": "0123456789abcdef0123456789abcdef01234567", "repo": "SDNick484/mcp-server-webos"}
+```
+
+That lets a dashboard (Workbench reads `https://mcp.example.com/<path>/healthz`) show when a deployed server is
+behind `main`. The fields come from a `COMMIT` file: line 1 the SHA (`^[0-9a-f]{7,40}$`; install writes all 40),
+line 2 optionally the repo (`^[A-Za-z0-9-]+/[A-Za-z0-9._-]+$`).
+
+- **Where:** `Path(sys.prefix).parent / "COMMIT"`, which is `$PREFIX/COMMIT` for a venv at `$PREFIX/venv`.
+  `MCP_COMMIT_FILE` points elsewhere.
+- **When:** read on every health request, so restamping it shows without a restart.
+- **If it's wrong:** a missing, unreadable, oversized (over 512 bytes) or malformed file, or line, leaves that
+  field out. It never fails the check or changes the status code.
+
+### Stamping it from a sibling's `install.sh`
+
+`deploy/alpine/commit.sh` (module `deploy`) works out the commit **before** pip, so the stamp and the install are
+the same commit, and writes `COMMIT` only **after** pip succeeds:
+
+| `SOURCE` | Installs | Stamps |
+| --- | --- | --- |
+| `git+https://github.com/<REPO>` (the default) | `git+https://github.com/<REPO>@<sha>`, `<sha>` from `git ls-remote` of `main` | `<sha>` and `<REPO>` |
+| a checkout directory | the directory | its `git rev-parse HEAD`, if it is the top of a git checkout |
+| any other pip spec | the spec | nothing (any old `COMMIT` is removed) |
+
+If `ls-remote` fails, the install stops rather than install an unpinned copy. In the sibling's install.sh, add
+`git` to its `apk add`, then:
+
+```sh
+. "$HERE/commit.sh"
+REPO=SDNick484/mcp-server-webos
+pinned=$(commit_source "$SRC" "$REPO")
+SRC=$(printf '%s\n' "$pinned" | sed -n 1p)
+COMMIT=$(printf '%s\n' "$pinned" | sed -n 2p)
+
+python3 -m venv "$PREFIX/venv"
+"$PREFIX/venv/bin/pip" install --quiet --upgrade "$SRC"
+"$PREFIX/venv/bin/pip" install --quiet --force-reinstall --no-deps "$SRC"
+write_commit "$PREFIX" "$COMMIT" "$REPO"   # set -e: never reached if pip failed
+```
+
+Then check it: `curl -s https://mcp.example.com/<path>/healthz`.
+
+Not covered: matinee keeps its own `mcp_remote.py`, which isn't synced from here; it needs the same change by hand.
 
 ## Routing eval
 

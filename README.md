@@ -10,7 +10,7 @@ The single source of truth for code the sibling MCP servers each carry a copy of
 | `ratelimit` | `src/mcp_shared/ratelimit.py` | `src/<pkg>/ratelimit.py` | `TokenBucket` (`take`, `refund`, async `acquire`/`reserve`), `KeyedTokenBucket` and `refusal`: per-device rate limits |
 | `registry` | `src/mcp_shared/registry.py` | `src/<pkg>/registry.py` | the assumption registry's record, statuses, queries and doctor summaries (`doctor_lines`, `doctor_summary`; each sibling's list stays in its `assumptions.py`) |
 | `lookup` | `src/mcp_shared/lookup.py` | `src/<pkg>/lookup.py` | `norm`, `suggest`, and `unknown_with_suggestions`: normalized matching and closest candidate suggestions on lookup misses |
-| `tools` | `src/mcp_shared/tools.py` | `src/<pkg>/tools.py` | standard MCP `ToolAnnotations` presets (`READ_ONLY`, `ACT`, `ACT_IDEMPOTENT`, `DESTRUCTIVE`, `OPEN_WORLD_READ`) |
+| `tools` | `src/mcp_shared/tools.py` | `src/<pkg>/tools.py` | standard MCP `ToolAnnotations` presets (`READ_ONLY`, `ACT`, `ACT_IDEMPOTENT`, `DESTRUCTIVE`, `OPEN_WORLD_READ`); `trim_tools(mcp)`, called after the last `@mcp.tool()`, shortens what `tools/list` sends (drops generated schema titles, flattens optional-argument unions, unwraps descriptions) |
 | `deploy` | `deploy/alpine/commit.sh` | `deploy/alpine/commit.sh` | sourced by the sibling's `install.sh`: pins the commit it installs and stamps `$PREFIX/COMMIT` |
 | (each) | `templates/tests/test_*.py` | `tests/test_*.py` | each module's tests, with `__PKG__` for the package name |
 | (none) | `scripts/sync_shared.py` | `scripts/sync_shared.py` | the script that copies all of the above |
